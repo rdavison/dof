@@ -1,0 +1,39 @@
+{
+  "name": "graphite-layout",
+  "version": "0.0.1",
+  "author": "Richard Davison <richardneildavison@gmail.com>",
+  "license": "MIT",
+  "private": true,
+  "repository": "https://github.com/rdavison/nrtshaei-layout",
+  "scripts": {
+    "dev": "next $(if [ -f .port ]; then echo \"-p $(cat .port)\"; fi)",
+    "rescript": "rescript build -w",
+    "debug": "NODE_OPTIONS='--inspect' next",
+    "build": "rescript && next build && next export",
+    "format": "rescript format -all",
+    "clean": "rescript clean; rm -f .merlin .bsb.lock; rm -rf .next out",
+    "distclean": "npm run clean; rm -rf node_modules; rm -f .port"
+  },
+  "dependencies": {
+    "@headlessui/react": "^1.7.7",
+    "@heroicons/react": "^2.0.14",
+    "@tailwindcss/forms": "^0.5.3",
+    "next": "^12.3.4",
+    "prop-types": "^15.8.1",
+    "react": "^17.0.2",
+    "react-dom": "^17.0.2"
+  },
+  "devDependencies": {
+    "@rescript/core": "^0.1.0",
+    "@rescript/react": "0.10.3",
+    "@tailwindcss/typography": "^0.5.9",
+    "autoprefixer": "^10.4.13",
+    "cssnano": "5.0.5",
+    "gentype": "^4.5.0",
+    "next-transpile-modules": "^10.0.0",
+    "postcss": "^8.4.21",
+    "postcss-cli": "8.3.1",
+    "rescript": "^10.0.1",
+    "tailwindcss": "^3.2.4"
+  }
+}

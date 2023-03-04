@@ -1,0 +1,14 @@
+{
+    "editor.formatOnSave": true,
+    "files.exclude": {
+        "**/*.mjs": true,
+        "**/*.gen.{tsx,js}": true,
+        "**/.merlin": true,
+        ".bsb.lock": true,
+        ".next": true,
+        "lib/": true,
+        "node_modules/": true,
+        "out/": true,
+        "package-lock.json": true,
+    }
+}
