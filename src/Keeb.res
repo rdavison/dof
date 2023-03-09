@@ -7,8 +7,48 @@ module Key = {
     | #_2
     | #_2_25
     | #_5
-    | #Nav
   ]
+
+  module Power = {
+    @react.component
+    let make = () => {
+      let shape = "h-[60px] w-[60px]"
+      <div
+        className={`${shape} m-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex`}>
+        <div className="text-4xl m-auto text-slate-800"> {React.string("○")} </div>
+      </div>
+    }
+  }
+
+  module Nav = {
+    @react.component
+    let make = () => {
+      <div className="h-[60px] w-[188px] grid gap-0 grid-cols-3 grid-rows-2">
+        <div />
+        <div
+          id="ArrowUp"
+          className={`text-xs my-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex`}>
+          <div className="m-auto"> {React.string("▲")} </div>
+        </div>
+        <div />
+        <div
+          id="ArrowLeft"
+          className={`text-xs mt-[2px] mr-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex`}>
+          <div className="m-auto"> {React.string("◀")} </div>
+        </div>
+        <div
+          id="ArrowDown"
+          className={`text-xs mt-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex`}>
+          <div className="m-auto"> {React.string("▼")} </div>
+        </div>
+        <div
+          id="ArrowRight"
+          className={`text-xs mt-[2px] ml-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex`}>
+          <div className="m-auto"> {React.string("▶")} </div>
+        </div>
+      </div>
+    }
+  }
 
   @react.component
   let make = (~id="", ~label: array<string>, ~shape: shape) => {
@@ -21,7 +61,6 @@ module Key = {
       | #_2 => "h-[60px] w-[124px]"
       | #_2_25 => "h-[60px] w-[141px]"
       | #_5 => "h-[60px] w-[316px]"
-      | #Nav => "h-[60px] w-[188px]"
       }
     }
     let label = {
@@ -326,6 +365,10 @@ module Keyboard = {
     "Space",
     "OSRight",
     "AltRight",
+    "ArrowUp",
+    "ArrowLeft",
+    "ArrowDown",
+    "ArrowRight",
   ]
 
   @react.component
@@ -403,7 +446,7 @@ module Keyboard = {
             <Key id="F10" label={["F10"]} shape={#_1} />
             <Key id="F11" label={["F11"]} shape={#_1} />
             <Key id="F12" label={["F12"]} shape={#_1} />
-            <Key label={[""]} shape={#_1} />
+            <Key.Power />
           </div>
           <div className="flex flex-row">
             <Key id="Backquote" label={tilde} shape={#_1} />
@@ -474,7 +517,7 @@ module Keyboard = {
             <Key id="Space" label={[""]} shape={#_5} />
             <Key id="OSRight" label={["⌘"]} shape={#_1_25} />
             <Key id="AltRight" label={["⌥"]} shape={#_1} />
-            <Key label={["<^v>"]} shape={#Nav} />
+            <Key.Nav />
           </div>
         </div>
       </div>
