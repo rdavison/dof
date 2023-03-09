@@ -5,7 +5,8 @@
     "react-jsx": 3
   },
   "bs-dependencies": [
-    "@rescript/react"
+    "@rescript/react",
+    "rescript-webapi"
   ],
   "ppx-flags": [],
   "sources": [
