@@ -492,6 +492,5 @@ let getStaticProps: Next.GetStaticProps.t<props, 'params, 'previewData> = _conte
 let default = (_props: props) => {
   <div className="flex flex-col gap-8">
     <Keyboard t={#Ansi(Ansi.graphite)} />
-    <Keyboard t={#Ansi(Ansi.qwerty)} />
   </div>
 }
