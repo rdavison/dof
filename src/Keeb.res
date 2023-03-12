@@ -1,3 +1,18 @@
+type quote = {
+  text: string,
+  source: string,
+  length: int,
+  id: int,
+}
+
+type corpus = {
+  language: string,
+  groups: array<array<int>>,
+  quotes: array<quote>,
+}
+
+@scope("JSON") @val external parseCorpus: string => corpus = "parse"
+
 module Key = {
   type shape = [
     | #_1
@@ -250,6 +265,308 @@ module Ansi = {
     slash: ["/", "<"],
     right_shift: ["shift"],
   }
+
+  let graphite2Keycode = char =>
+    switch char {
+    | "`" | "~" => "Backquote"
+    | "1" | "!" => "Digit1"
+    | "2" | "@" => "Digit2"
+    | "3" | "#" => "Digit3"
+    | "4" | "$" => "Digit4"
+    | "5" | "%" => "Digit5"
+    | "6" | "^" => "Digit6"
+    | "7" | "&" => "Digit7"
+    | "8" | "*" => "Digit8"
+    | "9" | "(" => "Digit9"
+    | "0" | ")" => "Digit0"
+    | "[" | "{" => "Minus"
+    | "]" | "}" => "Equal"
+    | "b" | "B" => "KeyQ"
+    | "l" | "L" => "KeyW"
+    | "d" | "D" => "KeyE"
+    | "w" | "W" => "KeyR"
+    | "z" | "Z" => "KeyT"
+    | "'" | "_" => "KeyY"
+    | "f" | "F" => "KeyU"
+    | "o" | "O" => "KeyI"
+    | "u" | "U" => "KeyO"
+    | "j" | "J" => "KeyP"
+    | ";" | ":" => "BracketLeft"
+    | "=" | "+" => "BracketRight"
+    | "n" | "N" => "KeyA"
+    | "r" | "R" => "KeyS"
+    | "t" | "T" => "KeyD"
+    | "s" | "S" => "KeyF"
+    | "g" | "G" => "KeyG"
+    | "y" | "Y" => "KeyH"
+    | "h" | "H" => "KeyJ"
+    | "a" | "A" => "KeyK"
+    | "e" | "E" => "KeyL"
+    | "i" | "I" => "Semicolon"
+    | "," | "?" => "Quote"
+    | "q" | "Q" => "KeyZ"
+    | "x" | "X" => "KeyX"
+    | "m" | "M" => "KeyC"
+    | "c" | "C" => "KeyV"
+    | "v" | "V" => "KeyB"
+    | "k" | "K" => "KeyN"
+    | "p" | "P" => "KeyM"
+    | "." | ">" => "Comma"
+    | "-" | "\"" => "Period"
+    | "/" | "<" => "Slash"
+    | " " => "Space"
+    | _ => ""
+    }
+}
+
+let c = c =>
+  switch c {
+  | #white => "rgb(241 245 249)"
+  | #indigo => "rgb(99 102 241"
+  | #green => "rgb(34 197 94)"
+  | #blue => "rgb(59 130 246)"
+  | #yellow1 => "rgb(253 224 71)"
+  | #yellow2 => "rgb(254 240 138)"
+  | #black => "rgb(15 23 42)"
+  | #red => "rgb(239 68 68)"
+  }
+
+let sim = (keycode, color) => {
+  switch document->Webapi.Dom.Document.getElementById(keycode) {
+  | None => ()
+  | Some(element) =>
+    Js.log2("down", keycode)
+    let css = {
+      "color": switch color {
+      | #indigo => [c(#white), c(#white)]
+      | #red => [c(#white), c(#white)]
+      | #green => [c(#white), c(#white)]
+      | #blue => [c(#white), c(#white)]
+      | #yellow1 => [c(#black), c(#white)]
+      | #white => [c(#black), c(#white)]
+      },
+      "backgroundColor": switch color {
+      | #indigo => [c(#indigo), c(#black)]
+      | #red => [c(#red), c(#black)]
+      | #green => [c(#green), c(#black)]
+      | #blue => [c(#blue), c(#black)]
+      | #yellow1 => [c(#yellow1), c(#black)]
+      | #white => [c(#white), c(#black)]
+      },
+    }
+    let timing = {
+      "duration": 1000,
+      "iterations": 1,
+      "easing": "ease",
+    }
+    let _ = element->Webapi.Dom.Element.animate(css, timing)
+  }
+}
+
+let delay = timeout => {
+  Promise.make((resolve, _reject) => {
+    let _ = setTimeout(() => resolve(. ()), timeout)
+  })
+}
+
+let runKeycode = (keycode, color) => {
+  sim(keycode, color)
+  switch keycode {
+  | "Space" => delay(200)
+  | _ => delay(50)
+  }
+}
+
+let kcHF = keycode => {
+  switch keycode {
+  | "Escape" => (#l, #r)
+  | "F1" => (#l, #r)
+  | "F2" => (#l, #m)
+  | "F3" => (#l, #m)
+  | "F4" => (#l, #i)
+  | "F5" => (#l, #i)
+  | "F6" => (#r, #i)
+  | "F7" => (#r, #i)
+  | "F8" => (#r, #m)
+  | "F9" => (#r, #r)
+  | "F10" => (#r, #i)
+  | "F11" => (#r, #m)
+  | "F12" => (#r, #r)
+  | "Tab" => (#l, #p)
+  | "Backquote" => (#l, #r)
+  | "Digit1" => (#l, #r)
+  | "Digit2" => (#l, #r)
+  | "Digit3" => (#l, #m)
+  | "Digit4" => (#l, #i)
+  | "Digit5" => (#l, #i)
+  | "Digit6" => (#r, #i)
+  | "Digit7" => (#r, #i)
+  | "Digit8" => (#r, #m)
+  | "Digit9" => (#r, #m)
+  | "Digit0" => (#r, #p)
+  | "Minus" => (#r, #m)
+  | "Equal" => (#r, #r)
+  | "Backspace" => (#r, #r)
+  | "KeyQ" => (#l, #p)
+  | "KeyW" => (#l, #r)
+  | "KeyE" => (#l, #m)
+  | "KeyR" => (#l, #i)
+  | "KeyT" => (#l, #i)
+  | "KeyY" => (#r, #i)
+  | "KeyU" => (#r, #i)
+  | "KeyI" => (#r, #m)
+  | "KeyO" => (#r, #r)
+  | "KeyP" => (#r, #p)
+  | "BracketLeft" => (#r, #p)
+  | "BracketRight" => (#r, #p)
+  | "Backslash" => (#r, #p)
+  | "ControlRight" => (#l, #p)
+  | "KeyA" => (#l, #p)
+  | "KeyS" => (#l, #r)
+  | "KeyD" => (#l, #m)
+  | "KeyF" => (#l, #i)
+  | "KeyG" => (#l, #i)
+  | "KeyH" => (#r, #i)
+  | "KeyJ" => (#r, #i)
+  | "KeyK" => (#r, #m)
+  | "KeyL" => (#r, #r)
+  | "Semicolon" => (#r, #p)
+  | "Quote" => (#r, #p)
+  | "Enter" => (#r, #p)
+  | "ShiftLeft" => (#l, #p)
+  | "KeyZ" => (#l, #p)
+  | "KeyX" => (#l, #r)
+  | "KeyC" => (#l, #m)
+  | "KeyV" => (#l, #i)
+  | "KeyB" => (#l, #i)
+  | "KeyN" => (#r, #i)
+  | "KeyM" => (#r, #i)
+  | "Comma" => (#r, #m)
+  | "Period" => (#r, #r)
+  | "Slash" => (#r, #p)
+  | "ShiftRight" => (#r, #p)
+  | "ControlLeft" => (#l, #p)
+  | "AltLeft" => (#l, #t)
+  | "OSLeft" => (#l, #t)
+  | "Space" => (#r, #t)
+  | "OSRight" => (#r, #t)
+  | "AltRight" => (#r, #t)
+  | "ArrowUp" => (#r, #m)
+  | "ArrowLeft" => (#r, #i)
+  | "ArrowDown" => (#r, #m)
+  | "ArrowRight" => (#r, #r)
+  | _ => failwith("Invalid")
+  }
+}
+
+let cmpH = (a, b) => {
+  switch (a, b) {
+  | (#l, #r) => -1
+  | (#r, #l) => 1
+  | (_, _) => 0
+  }
+}
+
+let cmpHF = ((h1, f1), (h2, f2)) => {
+  let res = cmpH(h1, h2)
+  if res != 0 {
+    res
+  } else {
+    let order = switch h1 {
+    | #l => [#p, #r, #m, #i, #t]
+    | #r => [#t, #i, #m, #r, #p]
+    }
+    let f1 = order->Array.indexOf(f1)
+    let f2 = order->Array.indexOf(f2)
+    f1 < f2 ? -1 : f1 > f2 ? 1 : 0
+  }
+}
+let color = (hfCurr, hfNext) => {
+  switch hfCurr {
+  | (_, #t) => #white
+  | _ =>
+    let res = cmpHF(hfCurr, hfNext)
+    if res < 0 {
+      #blue
+    } else if res > 0 {
+      #red
+    } else {
+      #yellow1
+    }
+  }
+}
+
+let runText = (text, setOffset) => {
+  let data = {
+    let text = text->String.split("")->Array.map(x => Some(x))
+    let a = [None]->Array.concat(text)
+    let b = a->Array.sliceToEnd(~start=1)->Array.concat([None])
+    let c = b->Array.sliceToEnd(~start=1)->Array.concat([None])
+    let a = a->List.fromArray
+    let b = b->List.fromArray
+    let c = c->List.fromArray
+    let ab = List.zip(a, b)
+    List.zipBy(ab, c, ((a, b), c) => (a, b, c))
+    ->List.toArray
+    // // ->Array.flatMap(((prev, curr, next)) => {
+    // //   switch (curr, next) {
+    // //   | (Some(curr), Some(next)) =>
+    // //     let hfCurr = Ansi.graphite2Keycode(curr)->kcHF
+    // //     let hfNext = Ansi.graphite2Keycode(next)->kcHF
+    // //     switch (hfCurr, hfNext) {
+    // //     | ((_, #t), _)
+    // //     | (_, (_, #t)) => [(prev, Some(curr), Some(next))]
+    // //     | ((#l, _), (#r, _))
+    // //     | ((#r, _), (#l, _)) => [(prev, Some(curr), None), (Some(curr), None, Some(next))]
+    // //     | (_, _) => [(prev, Some(curr), Some(next))]
+    // //     }
+    // //   | (_, _) => [(prev, curr, next)]
+    // //   }
+    // // })
+    // ->Array.map(((prev, curr, next)) => {
+    //   switch (prev, curr, next) {
+    //   | (_, None, _) => None
+    //   | (None, Some(curr), None) =>
+    //     let kcCurr = Ansi.graphite2Keycode(curr)
+    //     Some(kcCurr, #white)
+    //   | (Some(prev), Some(curr), Some(" ")) =>
+    //     let kcPrev = Ansi.graphite2Keycode(prev)
+    //     let kcCurr = Ansi.graphite2Keycode(curr)
+    //     let c = color(kcPrev->kcHF, kcCurr->kcHF)
+    //     Some(kcCurr, c)
+    //   | (_, Some(curr), Some(next)) =>
+    //     let kcCurr = Ansi.graphite2Keycode(curr)
+    //     let kcNext = Ansi.graphite2Keycode(next)
+    //     let c = color(kcCurr->kcHF, kcNext->kcHF)
+    //     Some(kcCurr, c)
+    //   | (Some(prev), Some(curr), None) =>
+    //     let kcPrev = Ansi.graphite2Keycode(prev)
+    //     let kcCurr = Ansi.graphite2Keycode(curr)
+    //     let c = color(kcPrev->kcHF, kcCurr->kcHF)
+    //     Some(kcCurr, c)
+    //   }
+    // })
+    ->Array.map(((_prev, curr, _next)) => {
+      curr->Option.map(curr => {
+        let kcCurr = Ansi.graphite2Keycode(curr)
+        let c = {
+          switch kcCurr->kcHF {
+          | (_, #t) => #white
+          | (#r, _) => #red
+          | (#l, _) => #blue
+          }
+        }
+        (kcCurr, c)
+      })
+    })
+    ->Array.keepSome
+  }
+  data->Array.reduceWithIndex(Promise.resolve(), (p, (kcCurr, color), i) => {
+    p->Promise.then(() => {
+      setOffset(_ => i)
+      runKeycode(kcCurr, color)
+    })
+  })
 }
 
 module Keyboard = {
@@ -260,35 +577,21 @@ module Keyboard = {
   @get external body: Dom.document => Dom.element = "body"
 
   let useKey = key => {
-    open Webapi.Dom
+    module Dom = Webapi.Dom
     React.useEffect1(() => {
-      let onKeyDown = (ev: KeyboardEvent.t) => {
-        let code = KeyboardEvent.code(ev)
-        let target = KeyboardEvent.target(ev)
+      let onKeyDown = (ev: Dom.KeyboardEvent.t) => {
+        let code = Dom.KeyboardEvent.code(ev)
+        let target = Dom.KeyboardEvent.target(ev)
         let body = document->body
-        if String.equal(code, key) && Obj.magic(target) === body {
-          ev->KeyboardEvent.preventDefault
-          switch document->Document.getElementById(key) {
-          | None => ()
-          | Some(element) =>
-            Js.log2("down", key)
-            let css = {
-              "color": ["rgb(15 23 42)", "rgb(241 245 249)"],
-              "backgroundColor": ["rgb(241 245 249)", "rgb(15 23 42)"],
-            }
-            let timing = {
-              "duration": 1000,
-              "iterations": 1,
-              "easing": "ease",
-            }
-            Js.log(element->Element.animate(css, timing))
-          }
+        if OCamlCompat.String.equal(code, key) && Obj.magic(target) === body {
+          ev->Dom.KeyboardEvent.preventDefault
+          sim(key, #green)
         } else {
           Js.log(code)
         }
       }
-      window->Window.addKeyDownEventListener(onKeyDown)
-      Some(() => window->Window.removeKeyDownEventListener(onKeyDown))
+      window->Dom.Window.addKeyDownEventListener(onKeyDown)
+      Some(() => window->Dom.Window.removeKeyDownEventListener(onKeyDown))
     }, [key])
   }
 
@@ -525,15 +828,50 @@ module Keyboard = {
   }
 }
 
-type props = {content: string}
+type props = {corpus: corpus}
 
 let getStaticProps: Next.GetStaticProps.t<props, 'params, 'previewData> = _context => {
-  let props = {content: "Hello World"}
+  let data = Node.Fs.readFileAsUtf8Sync("corpus/english.json")
+  let props = {corpus: parseCorpus(data)}
   Js.Promise.resolve({"props": props})
 }
 
-let default = (_props: props) => {
-  <div className="flex flex-col gap-8">
+let default = (props: props) => {
+  let quotes = props.corpus.quotes
+  let quote = quotes->Array.getUnsafe(57)
+  let text = quote.text
+  let (offset, setOffset) = React.useState(() => 0)
+  let (runState, setRunState) = React.useState(() => #Init)
+  React.useEffect1(() => {
+    switch runState {
+    | #Running =>
+      let _ = runText(text, setOffset)->Promise.thenResolve(() => setRunState(_ => #Ready))
+    | #Init | #Ready => ()
+    }
+
+    None
+  }, [runState])
+
+  <div className="flex bg-b flex-col gap-8 w-[942px]">
+    <button
+      className="bg-slate-800 p-6 rounded-xl shadow-2xl text-3xl font-mono text-white"
+      onClick={_ => setRunState(_ => #Running)}
+      disabled={runState == #Running}>
+      {React.array(
+        text
+        ->String.split("")
+        ->Array.mapWithIndex((char, i) => {
+          let className = {
+            if i <= offset && runState != #Init {
+              "text-green-500"
+            } else {
+              ""
+            }
+          }
+          <span className> {React.string(char)} </span>
+        }),
+      )}
+    </button>
     <Keyboard t={#Ansi(Ansi.graphite)} />
   </div>
 }
