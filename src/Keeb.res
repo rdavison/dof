@@ -891,10 +891,21 @@ let getStaticProps: Next.GetStaticProps.t<props, 'params, 'previewData> = _conte
 
 let default = (props: props) => {
   let quotes = props.corpus.quotes
-  let quote = quotes->Array.getUnsafe(57)
-  let text = quote.text
-
-  let ((offset, color), setOffset) = React.useState(() => (-1, nextColor()))
+  let nextText = () => {
+    let quote = {
+      let rand = Js.Math.random_int(0, Array.length(quotes))
+      quotes->Array.getUnsafe(rand)
+    }
+    quote.text
+  }
+  let ((offset, text, color), setState) = React.useState(() => {
+    let text = nextText()
+    let color = {
+      nextColor()
+    }
+    let offset = -1
+    (offset, text, color)
+  })
   let (runState, setRunState) = React.useState(() => #Init)
   let ansi = Ansi.graphite
   let handleKC = kc => {
@@ -918,6 +929,11 @@ let default = (props: props) => {
       | "F11"
       | "F12"
       | "Tab" =>
+        setState(((_offset, _text, color)) => {
+          let offset = -1
+          let text = nextText()
+          (offset, text, color)
+        })
         None
       | "Backquote" => selectLayer(ansi.tilde)
       | "Digit1" => selectLayer(ansi.one)
@@ -984,9 +1000,9 @@ let default = (props: props) => {
       | _ => failwith("Invalid")
       }
     }
-    setOffset(((i, color)) => {
+    setState(((i, text, color)) => {
       switch char {
-      | None => (i, color)
+      | None => (i, text, color)
       | Some(char) =>
         let offset = i + 1
         let curr = text->Js.String2.charAt(offset)
@@ -997,9 +1013,9 @@ let default = (props: props) => {
             color
           }
           sim(kc, color)
-          (i + 1, color)
+          (i + 1, text, color)
         } else {
-          (i, color)
+          (i, text, color)
         }
       }
     })
