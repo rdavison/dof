@@ -13,6 +13,47 @@ type corpus = {
 
 @scope("JSON") @val external parseCorpus: string => corpus = "parse"
 
+// module Game = {
+//   let useViewport = (rows, cols, data) => {
+//     let (pos, setPos) = React.useState(() => 0)
+//     let len = String.length(data)
+//     let left = () => setPos(pos => pos > 0 ? pos + 1 : 0)
+//     let right = () => setPos(pos => pos < len - 1 ? pos + 1 : len - 1)
+//     let arr = ""->Array.make(~length=rows * cols)
+//     let wordBoundary = {
+//       let posRef = ref(pos)
+//       while posRef.contents < 0 && data->String.charAt(posRef.contents) != " " {
+//         decr(posRef)
+//       }
+//       posRef.contents
+//     }
+
+//   }
+
+//   @react.component
+//   let make = (~corpus) => {
+//     let quotes = corpus.quotes
+//     let quote = quotes->Array.getUnsafe(120)
+//     let text = quote.text->String.split(" ")->Array.flatMap(word => word->String.split(""))
+//     let viewport =
+//       <table className="w-[942px] px-4 max-h-[300px] overflow-hidden m-auto text-6xl font-mono">
+//         {text
+//         ->Array.mapWithIndex((word, i) => {
+//           let iStr = Int.toString(i)
+//           <tr key={`w-${iStr}`} className="">
+//             {word
+//             ->Array.mapWithIndex((char, j) => {
+//               let jStr = Int.toString(j)
+//               <td key={`w-${iStr}-${jStr}`} className=""> {React.string(char)} </td>
+//             })
+//             ->React.array}
+//           </tr>
+//         })
+//         ->React.array}
+//       </table>
+//   }
+// }
+
 module Key = {
   type shape = [
     | #_1
@@ -335,7 +376,7 @@ let sim = (keycode, color) => {
   switch document->Webapi.Dom.Document.getElementById(keycode) {
   | None => ()
   | Some(element) =>
-    Js.log2("down", keycode)
+    // Js.log2("down", keycode)
     let css = {
       "color": switch color {
       | #indigo => [c(#white), c(#white)]
@@ -496,6 +537,19 @@ let color = (hfCurr, hfNext) => {
   }
 }
 
+let nextColor = {
+  let rec wheel = list{#red, #yellow1, #green, #blue, #indigo, ...wheel}
+  let state = ref(wheel)
+  () => {
+    switch state.contents {
+    | list{} => assert false
+    | list{hd, ...rest} =>
+      state.contents = rest
+      hd
+    }
+  }
+}
+
 let runText = (text, setOffset) => {
   let data = {
     let text = text->String.split("")->Array.map(x => Some(x))
@@ -506,6 +560,7 @@ let runText = (text, setOffset) => {
     let b = b->List.fromArray
     let c = c->List.fromArray
     let ab = List.zip(a, b)
+    let color = ref(nextColor())
     List.zipBy(ab, c, ((a, b), c) => (a, b, c))
     ->List.toArray
     // // ->Array.flatMap(((prev, curr, next)) => {
@@ -546,16 +601,14 @@ let runText = (text, setOffset) => {
     //     Some(kcCurr, c)
     //   }
     // })
-    ->Array.map(((_prev, curr, _next)) => {
+    ->Array.map(((prev, curr, _next)) => {
+      let _ = switch prev {
+      | Some(" ") => color.contents = nextColor()
+      | _ => ()
+      }
       curr->Option.map(curr => {
         let kcCurr = Ansi.graphite2Keycode(curr)
-        let c = {
-          switch kcCurr->kcHF {
-          | (_, #t) => #white
-          | (#r, _) => #red
-          | (#l, _) => #blue
-          }
-        }
+        let c = color.contents
         (kcCurr, c)
       })
     })
@@ -576,7 +629,7 @@ module Keyboard = {
 
   @get external body: Dom.document => Dom.element = "body"
 
-  let useKey = key => {
+  let useKey = (key, ~handleKC) => {
     module Dom = Webapi.Dom
     React.useEffect1(() => {
       let onKeyDown = (ev: Dom.KeyboardEvent.t) => {
@@ -585,7 +638,7 @@ module Keyboard = {
         let body = document->body
         if OCamlCompat.String.equal(code, key) && Obj.magic(target) === body {
           ev->Dom.KeyboardEvent.preventDefault
-          sim(key, #green)
+          handleKC(key)
         } else {
           Js.log(code)
         }
@@ -675,8 +728,8 @@ module Keyboard = {
   ]
 
   @react.component
-  let make = (~t: t) => {
-    keyIds->Belt.Array.forEach(useKey)
+  let make = (~t: t, ~handleKC) => {
+    keyIds->Belt.Array.forEach(useKey(~handleKC))
     switch t {
     | #Ansi({
         tilde,
@@ -840,17 +893,126 @@ let default = (props: props) => {
   let quotes = props.corpus.quotes
   let quote = quotes->Array.getUnsafe(57)
   let text = quote.text
-  let (offset, setOffset) = React.useState(() => 0)
-  let (runState, setRunState) = React.useState(() => #Init)
-  React.useEffect1(() => {
-    switch runState {
-    | #Running =>
-      let _ = runText(text, setOffset)->Promise.thenResolve(() => setRunState(_ => #Ready))
-    | #Init | #Ready => ()
-    }
 
-    None
-  }, [runState])
+  let ((offset, color), setOffset) = React.useState(() => (-1, nextColor()))
+  let (runState, setRunState) = React.useState(() => #Init)
+  let ansi = Ansi.graphite
+  let handleKC = kc => {
+    //Js.log(kc)
+
+    let selectLayer = x => Some(x->Array.getUnsafe(0))
+
+    let char = {
+      switch kc {
+      | "Escape"
+      | "F1"
+      | "F2"
+      | "F3"
+      | "F4"
+      | "F5"
+      | "F6"
+      | "F7"
+      | "F8"
+      | "F9"
+      | "F10"
+      | "F11"
+      | "F12"
+      | "Tab" =>
+        None
+      | "Backquote" => selectLayer(ansi.tilde)
+      | "Digit1" => selectLayer(ansi.one)
+      | "Digit2" => selectLayer(ansi.two)
+      | "Digit3" => selectLayer(ansi.three)
+      | "Digit4" => selectLayer(ansi.four)
+      | "Digit5" => selectLayer(ansi.five)
+      | "Digit6" => selectLayer(ansi.six)
+      | "Digit7" => selectLayer(ansi.seven)
+      | "Digit8" => selectLayer(ansi.eight)
+      | "Digit9" => selectLayer(ansi.nine)
+      | "Digit0" => selectLayer(ansi.zero)
+      | "Minus" => selectLayer(ansi.hyphen)
+      | "Equal" => selectLayer(ansi.equal)
+      | "Backspace" => None
+      | "KeyQ" => selectLayer(ansi.q)
+      | "KeyW" => selectLayer(ansi.w)
+      | "KeyE" => selectLayer(ansi.e)
+      | "KeyR" => selectLayer(ansi.r)
+      | "KeyT" => selectLayer(ansi.t)
+      | "KeyY" => selectLayer(ansi.y)
+      | "KeyU" => selectLayer(ansi.u)
+      | "KeyI" => selectLayer(ansi.i)
+      | "KeyO" => selectLayer(ansi.o)
+      | "KeyP" => selectLayer(ansi.p)
+      | "BracketLeft" => selectLayer(ansi.open_bracket)
+      | "BracketRight" => selectLayer(ansi.close_bracket)
+      | "Backslash" => selectLayer(ansi.backslash)
+      | "ControlRight" => None
+      | "KeyA" => selectLayer(ansi.a)
+      | "KeyS" => selectLayer(ansi.s)
+      | "KeyD" => selectLayer(ansi.d)
+      | "KeyF" => selectLayer(ansi.f)
+      | "KeyG" => selectLayer(ansi.g)
+      | "KeyH" => selectLayer(ansi.h)
+      | "KeyJ" => selectLayer(ansi.j)
+      | "KeyK" => selectLayer(ansi.k)
+      | "KeyL" => selectLayer(ansi.l)
+      | "Semicolon" => selectLayer(ansi.semicolon)
+      | "Quote" => selectLayer(ansi.quote)
+      | "Enter" => None
+      | "ShiftLeft" => None
+      | "KeyZ" => selectLayer(ansi.z)
+      | "KeyX" => selectLayer(ansi.x)
+      | "KeyC" => selectLayer(ansi.c)
+      | "KeyV" => selectLayer(ansi.v)
+      | "KeyB" => selectLayer(ansi.b)
+      | "KeyN" => selectLayer(ansi.n)
+      | "KeyM" => selectLayer(ansi.m)
+      | "Comma" => selectLayer(ansi.comma)
+      | "Period" => selectLayer(ansi.period)
+      | "Slash" => selectLayer(ansi.slash)
+      | "ShiftRight" => None
+      | "ControlLeft" => None
+      | "AltLeft" => None
+      | "OSLeft" => None
+      | "Space" => Some(" ")
+      | "OSRight" => None
+      | "AltRight" => None
+      | "ArrowUp" => None
+      | "ArrowLeft" => None
+      | "ArrowDown" => None
+      | "ArrowRight" => None
+      | _ => failwith("Invalid")
+      }
+    }
+    setOffset(((i, color)) => {
+      switch char {
+      | None => (i, color)
+      | Some(char) =>
+        let offset = i + 1
+        let curr = text->Js.String2.charAt(offset)
+        if char->Js.String2.toLowerCase == curr->Js.String2.toLowerCase {
+          let color = if kc == "Space" {
+            nextColor()
+          } else {
+            color
+          }
+          sim(kc, color)
+          (i + 1, color)
+        } else {
+          (i, color)
+        }
+      }
+    })
+  }
+  // React.useEffect1(() => {
+  //   switch runState {
+  //   | #Running =>
+  //     let _ = runText(text, setOffset)->Promise.thenResolve(() => setRunState(_ => #Ready))
+  //   | #Init | #Ready => ()
+  //   }
+
+  //   None
+  // }, [runState])
 
   <div className="flex bg-b flex-col gap-8 w-[942px]">
     <button
@@ -862,16 +1024,16 @@ let default = (props: props) => {
         ->String.split("")
         ->Array.mapWithIndex((char, i) => {
           let className = {
-            if i <= offset && runState != #Init {
-              "text-green-500"
+            if i <= offset {
+              "text-slate-100"
             } else {
-              ""
+              "text-slate-600"
             }
           }
           <span className> {React.string(char)} </span>
         }),
       )}
     </button>
-    <Keyboard t={#Ansi(Ansi.graphite)} />
+    <Keyboard t={#Ansi(ansi)} handleKC />
   </div>
 }
