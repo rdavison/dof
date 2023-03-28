@@ -629,23 +629,155 @@ module Keyboard = {
 
   @get external body: Dom.document => Dom.element = "body"
 
-  let useKey = (key, ~handleKC) => {
-    module Dom = Webapi.Dom
-    React.useEffect1(() => {
-      let onKeyDown = (ev: Dom.KeyboardEvent.t) => {
-        let code = Dom.KeyboardEvent.code(ev)
-        let target = Dom.KeyboardEvent.target(ev)
-        let body = document->body
-        if OCamlCompat.String.equal(code, key) && Obj.magic(target) === body {
-          ev->Dom.KeyboardEvent.preventDefault
-          handleKC(key)
-        } else {
-          Js.log(code)
+  let handleKC = (ev, ~t, ~setState, ~nextText) => {
+    let kc = Webapi.Dom.KeyboardEvent.code(ev)
+    let selectLayer = x => {
+      if Webapi.Dom.KeyboardEvent.shiftKey(ev) {
+        switch x->Array.get(1) {
+        | None => x->Array.get(0)
+        | Some(_) as res => res
+        }
+      } else {
+        x->Array.get(0)->Option.map(String.toLowerCase)
+      }
+    }
+
+    let char = {
+      switch t {
+      | #Ansi(ansi: Ansi.t) =>
+        switch kc {
+        | "Escape"
+        | "F1"
+        | "F2"
+        | "F3"
+        | "F4"
+        | "F5"
+        | "F6"
+        | "F7"
+        | "F8"
+        | "F9"
+        | "F10"
+        | "F11"
+        | "F12"
+        | "Tab" =>
+          setState(((_offset, _text, color, _highlightColor)) => {
+            let offset = -1
+            let text = nextText()
+            (offset, text, color, #white)
+          })
+          None
+        | "Backquote" => selectLayer(ansi.tilde)
+        | "Digit1" => selectLayer(ansi.one)
+        | "Digit2" => selectLayer(ansi.two)
+        | "Digit3" => selectLayer(ansi.three)
+        | "Digit4" => selectLayer(ansi.four)
+        | "Digit5" => selectLayer(ansi.five)
+        | "Digit6" => selectLayer(ansi.six)
+        | "Digit7" => selectLayer(ansi.seven)
+        | "Digit8" => selectLayer(ansi.eight)
+        | "Digit9" => selectLayer(ansi.nine)
+        | "Digit0" => selectLayer(ansi.zero)
+        | "Minus" => selectLayer(ansi.hyphen)
+        | "Equal" => selectLayer(ansi.equal)
+        | "Backspace" =>
+          setState(((offset, text, color, highlightColor)) => {
+            let offset = offset > -1 ? offset - 1 : -1
+            (offset, text, color, highlightColor)
+          })
+          None
+        | "KeyQ" => selectLayer(ansi.q)
+        | "KeyW" => selectLayer(ansi.w)
+        | "KeyE" => selectLayer(ansi.e)
+        | "KeyR" => selectLayer(ansi.r)
+        | "KeyT" => selectLayer(ansi.t)
+        | "KeyY" => selectLayer(ansi.y)
+        | "KeyU" => selectLayer(ansi.u)
+        | "KeyI" => selectLayer(ansi.i)
+        | "KeyO" => selectLayer(ansi.o)
+        | "KeyP" => selectLayer(ansi.p)
+        | "BracketLeft" => selectLayer(ansi.open_bracket)
+        | "BracketRight" => selectLayer(ansi.close_bracket)
+        | "Backslash" => selectLayer(ansi.backslash)
+        | "ControlRight" => None
+        | "KeyA" => selectLayer(ansi.a)
+        | "KeyS" => selectLayer(ansi.s)
+        | "KeyD" => selectLayer(ansi.d)
+        | "KeyF" => selectLayer(ansi.f)
+        | "KeyG" => selectLayer(ansi.g)
+        | "KeyH" => selectLayer(ansi.h)
+        | "KeyJ" => selectLayer(ansi.j)
+        | "KeyK" => selectLayer(ansi.k)
+        | "KeyL" => selectLayer(ansi.l)
+        | "Semicolon" => selectLayer(ansi.semicolon)
+        | "Quote" => selectLayer(ansi.quote)
+        | "Enter" => None
+        | "ShiftLeft" => None
+        | "KeyZ" => selectLayer(ansi.z)
+        | "KeyX" => selectLayer(ansi.x)
+        | "KeyC" => selectLayer(ansi.c)
+        | "KeyV" => selectLayer(ansi.v)
+        | "KeyB" => selectLayer(ansi.b)
+        | "KeyN" => selectLayer(ansi.n)
+        | "KeyM" => selectLayer(ansi.m)
+        | "Comma" => selectLayer(ansi.comma)
+        | "Period" => selectLayer(ansi.period)
+        | "Slash" => selectLayer(ansi.slash)
+        | "ShiftRight" => None
+        | "ControlLeft" => None
+        | "AltLeft" => None
+        | "OSLeft" => None
+        | "Space" => Some(" ")
+        | "OSRight" => None
+        | "AltRight" => None
+        | "ArrowUp" => None
+        | "ArrowLeft" => None
+        | "ArrowDown" => None
+        | "ArrowRight" => None
+        | _ => failwith("Invalid")
         }
       }
+    }
+    setState(((i, text, color, highlightColor)) => {
+      switch char {
+      | None => (i, text, color, highlightColor)
+      | Some(char) =>
+        let offset = i + 1
+        let curr = text->Js.String2.charAt(offset)
+        if char == curr {
+          let color = if kc == "Space" {
+            nextColor()
+          } else {
+            color
+          }
+          sim(kc, color)
+          (i + 1, text, color, #white)
+        } else {
+          (i + 1, text, color, #red)
+        }
+      }
+    })
+  }
+
+  let onKeyDown = (ev: Webapi.Dom.KeyboardEvent.t, ~t: t, ~setState, ~nextText) => {
+    let target = Webapi.Dom.KeyboardEvent.target(ev)
+    let body = document->body
+    if Obj.magic(target) === body {
+      ev->Webapi.Dom.KeyboardEvent.preventDefault
+      ev->handleKC(~t, ~setState, ~nextText)
+    } else {
+      Js.log(ev)
+    }
+  }
+
+  let useListener = (t, ~setState, ~nextText) => {
+    module Dom = Webapi.Dom
+    let onKeyDown = React.useMemo3(() => {
+      onKeyDown(~t, ~setState, ~nextText)
+    }, (t, setState, nextText))
+    React.useEffect1(() => {
       window->Dom.Window.addKeyDownEventListener(onKeyDown)
       Some(() => window->Dom.Window.removeKeyDownEventListener(onKeyDown))
-    }, [key])
+    }, [onKeyDown])
   }
 
   let keyIds = [
@@ -728,8 +860,8 @@ module Keyboard = {
   ]
 
   @react.component
-  let make = (~t: t, ~handleKC) => {
-    keyIds->Belt.Array.forEach(useKey(~handleKC))
+  let make = (~t: t, ~setState, ~nextText) => {
+    useListener(t, ~setState, ~nextText)
     switch t {
     | #Ansi({
         tilde,
@@ -898,128 +1030,18 @@ let default = (props: props) => {
     }
     quote.text
   }
-  let ((offset, text, color), setState) = React.useState(() => {
+  let ((offset, text, color, highlightColor), setState) = React.useState(() => {
     let text = nextText()
     let color = {
       nextColor()
     }
     let offset = -1
-    (offset, text, color)
+    (offset, text, color, #white)
   })
+
   let (runState, setRunState) = React.useState(() => #Init)
   let ansi = Ansi.graphite
-  let handleKC = kc => {
-    //Js.log(kc)
 
-    let selectLayer = x => Some(x->Array.getUnsafe(0))
-
-    let char = {
-      switch kc {
-      | "Escape"
-      | "F1"
-      | "F2"
-      | "F3"
-      | "F4"
-      | "F5"
-      | "F6"
-      | "F7"
-      | "F8"
-      | "F9"
-      | "F10"
-      | "F11"
-      | "F12"
-      | "Tab" =>
-        setState(((_offset, _text, color)) => {
-          let offset = -1
-          let text = nextText()
-          (offset, text, color)
-        })
-        None
-      | "Backquote" => selectLayer(ansi.tilde)
-      | "Digit1" => selectLayer(ansi.one)
-      | "Digit2" => selectLayer(ansi.two)
-      | "Digit3" => selectLayer(ansi.three)
-      | "Digit4" => selectLayer(ansi.four)
-      | "Digit5" => selectLayer(ansi.five)
-      | "Digit6" => selectLayer(ansi.six)
-      | "Digit7" => selectLayer(ansi.seven)
-      | "Digit8" => selectLayer(ansi.eight)
-      | "Digit9" => selectLayer(ansi.nine)
-      | "Digit0" => selectLayer(ansi.zero)
-      | "Minus" => selectLayer(ansi.hyphen)
-      | "Equal" => selectLayer(ansi.equal)
-      | "Backspace" => None
-      | "KeyQ" => selectLayer(ansi.q)
-      | "KeyW" => selectLayer(ansi.w)
-      | "KeyE" => selectLayer(ansi.e)
-      | "KeyR" => selectLayer(ansi.r)
-      | "KeyT" => selectLayer(ansi.t)
-      | "KeyY" => selectLayer(ansi.y)
-      | "KeyU" => selectLayer(ansi.u)
-      | "KeyI" => selectLayer(ansi.i)
-      | "KeyO" => selectLayer(ansi.o)
-      | "KeyP" => selectLayer(ansi.p)
-      | "BracketLeft" => selectLayer(ansi.open_bracket)
-      | "BracketRight" => selectLayer(ansi.close_bracket)
-      | "Backslash" => selectLayer(ansi.backslash)
-      | "ControlRight" => None
-      | "KeyA" => selectLayer(ansi.a)
-      | "KeyS" => selectLayer(ansi.s)
-      | "KeyD" => selectLayer(ansi.d)
-      | "KeyF" => selectLayer(ansi.f)
-      | "KeyG" => selectLayer(ansi.g)
-      | "KeyH" => selectLayer(ansi.h)
-      | "KeyJ" => selectLayer(ansi.j)
-      | "KeyK" => selectLayer(ansi.k)
-      | "KeyL" => selectLayer(ansi.l)
-      | "Semicolon" => selectLayer(ansi.semicolon)
-      | "Quote" => selectLayer(ansi.quote)
-      | "Enter" => None
-      | "ShiftLeft" => None
-      | "KeyZ" => selectLayer(ansi.z)
-      | "KeyX" => selectLayer(ansi.x)
-      | "KeyC" => selectLayer(ansi.c)
-      | "KeyV" => selectLayer(ansi.v)
-      | "KeyB" => selectLayer(ansi.b)
-      | "KeyN" => selectLayer(ansi.n)
-      | "KeyM" => selectLayer(ansi.m)
-      | "Comma" => selectLayer(ansi.comma)
-      | "Period" => selectLayer(ansi.period)
-      | "Slash" => selectLayer(ansi.slash)
-      | "ShiftRight" => None
-      | "ControlLeft" => None
-      | "AltLeft" => None
-      | "OSLeft" => None
-      | "Space" => Some(" ")
-      | "OSRight" => None
-      | "AltRight" => None
-      | "ArrowUp" => None
-      | "ArrowLeft" => None
-      | "ArrowDown" => None
-      | "ArrowRight" => None
-      | _ => failwith("Invalid")
-      }
-    }
-    setState(((i, text, color)) => {
-      switch char {
-      | None => (i, text, color)
-      | Some(char) =>
-        let offset = i + 1
-        let curr = text->Js.String2.charAt(offset)
-        if char->Js.String2.toLowerCase == curr->Js.String2.toLowerCase {
-          let color = if kc == "Space" {
-            nextColor()
-          } else {
-            color
-          }
-          sim(kc, color)
-          (i + 1, text, color)
-        } else {
-          (i, text, color)
-        }
-      }
-    })
-  }
   // React.useEffect1(() => {
   //   switch runState {
   //   | #Running =>
@@ -1041,7 +1063,10 @@ let default = (props: props) => {
         ->Array.mapWithIndex((char, i) => {
           let className = {
             if i <= offset {
-              "text-slate-100"
+              switch highlightColor {
+              | #white => "text-slate-100"
+              | #red => "text-red-500"
+              }
             } else {
               "text-slate-600"
             }
@@ -1050,6 +1075,6 @@ let default = (props: props) => {
         }),
       )}
     </button>
-    <Keyboard t={#Ansi(ansi)} handleKC />
+    <Keyboard t={#Ansi(ansi)} setState nextText />
   </div>
 }
