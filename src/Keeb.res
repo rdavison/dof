@@ -277,7 +277,7 @@ module Ansi = {
     i: ["O"],
     o: ["U"],
     p: ["'","<"],
-    open_bracket: ["'",":"],
+    open_bracket: ["-",":"],
     close_bracket: ["=", ">"],
     backslash: ["\\", "|"],
     caps_lock: ["caps"],
