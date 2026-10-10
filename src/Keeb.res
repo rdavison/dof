@@ -363,7 +363,7 @@ module Ansi = {
 let c = c =>
   switch c {
   | #white => "rgb(241 245 249)"
-  | #indigo => "rgb(99 102 241"
+  | #indigo => "rgb(99 102 241)"
   | #green => "rgb(34 197 94)"
   | #blue => "rgb(59 130 246)"
   | #yellow1 => "rgb(253 224 71)"
@@ -497,6 +497,88 @@ let kcHF = keycode => {
   | "ArrowDown" => (#r, #m)
   | "ArrowRight" => (#r, #r)
   | _ => failwith("Invalid")
+  }
+}
+
+// Fading per-hand curves between consecutive keypresses within a word.
+// A word is a run of keypresses sharing the same active color.
+module Trace = {
+  module Dom = Webapi.Dom
+
+  let fadeMs = 1000
+
+  let isAlpha = keycode =>
+    switch keycode {
+    | "KeyQ" | "KeyW" | "KeyE" | "KeyR" | "KeyT" | "KeyY" | "KeyU" | "KeyI" | "KeyO" | "KeyP"
+    | "BracketLeft" | "BracketRight"
+    | "KeyA" | "KeyS" | "KeyD" | "KeyF" | "KeyG" | "KeyH" | "KeyJ" | "KeyK" | "KeyL"
+    | "Semicolon" | "Quote"
+    | "KeyZ" | "KeyX" | "KeyC" | "KeyV" | "KeyB" | "KeyN" | "KeyM"
+    | "Comma" | "Period" | "Slash" => true
+    | _ => false
+    }
+
+  type color = [#red | #yellow1 | #green | #blue | #indigo | #white]
+
+  let wordColor: ref<option<color>> = ref(None)
+  let lastLeft = ref(None)
+  let lastRight = ref(None)
+
+  let center = (element, origin) => {
+    let r = element->Dom.Element.getBoundingClientRect
+    let o = origin->Dom.Element.getBoundingClientRect
+    (
+      Dom.DomRect.left(r) -. Dom.DomRect.left(o) +. Dom.DomRect.width(r) /. 2.,
+      Dom.DomRect.top(r) -. Dom.DomRect.top(o) +. Dom.DomRect.height(r) /. 2.,
+    )
+  }
+
+  let draw = (src, dst, color) => {
+    let byId = id => document->Dom.Document.getElementById(id)
+    switch (byId("Traces"), byId(src), byId(dst)) {
+    | (Some(svg), Some(a), Some(b)) =>
+      let (x1, y1) = center(a, svg)
+      let (x2, y2) = center(b, svg)
+      // bow sideways so a->b and b->a don't overlap
+      let cx = (x1 +. x2) /. 2. -. (y2 -. y1) *. 0.2
+      let cy = (y1 +. y2) /. 2. +. (x2 -. x1) *. 0.2
+      let f = Float.toString
+      let path = document->Dom.Document.createElementNS("http://www.w3.org/2000/svg", "path")
+      path->Dom.Element.setAttribute("d", `M ${f(x1)} ${f(y1)} Q ${f(cx)} ${f(cy)} ${f(x2)} ${f(y2)}`)
+      path->Dom.Element.setAttribute("fill", "none")
+      path->Dom.Element.setAttribute("stroke", c(color))
+      path->Dom.Element.setAttribute("stroke-width", "6")
+      path->Dom.Element.setAttribute("stroke-linecap", "round")
+      svg->Dom.Element.appendChild(~child=path)
+      let timing = {
+        "duration": fadeMs,
+        "iterations": 1,
+        "easing": "ease-in",
+        "fill": "forwards",
+      }
+      let _ = path->Dom.Element.animate({"opacity": [0.9, 0.]}, timing)
+      let _ = setTimeout(() => path->Dom.Element.remove, fadeMs)
+    | _ => ()
+    }
+  }
+
+  let press = (keycode, color: color) => {
+    if wordColor.contents != Some(color) {
+      wordColor := Some(color)
+      lastLeft := None
+      lastRight := None
+    }
+    if isAlpha(keycode) {
+      let last = switch kcHF(keycode) {
+      | (#l, _) => lastLeft
+      | (#r, _) => lastRight
+      }
+      switch last.contents {
+      | Some(src) if src != keycode => draw(src, keycode, color)
+      | _ => ()
+      }
+      last := Some(keycode)
+    }
   }
 }
 
@@ -750,6 +832,7 @@ module Keyboard = {
             color
           }
           sim(kc, color)
+          Trace.press(kc, color)
           (i + 1, text, color, #white)
         } else {
           (i + 1, text, color, #red)
@@ -918,7 +1001,7 @@ module Keyboard = {
         slash,
         right_shift,
       }) =>
-      <div className="p-[6px] bg-slate-700 rounded-2xl shadow-lg shadow-black">
+      <div className="relative p-[6px] bg-slate-700 rounded-2xl shadow-lg shadow-black">
         <div className="flex flex-col">
           <div className="flex flex-row">
             <Key id="Escape" label={["esc"]} shape={#_1_5} />
@@ -1008,6 +1091,7 @@ module Keyboard = {
             <Key.Nav />
           </div>
         </div>
+        <svg id="Traces" className="absolute inset-0 w-full h-full pointer-events-none" />
       </div>
     }
   }
