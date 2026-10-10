@@ -500,10 +500,16 @@ let kcHF = keycode => {
   }
 }
 
-// Fading per-hand curves between consecutive keypresses within a word.
+// Fading per-hand curves between keypresses.
 // A word is a run of keypresses sharing the same active color.
-// Same-hand skipgrams (keys two presses apart, including across a space)
-// get a thinner dashed curve bowed the other way.
+//
+// Pairs: a solid curve between consecutive same-hand keypresses within a word,
+// plus a thinner dashed curve for same-hand skipgrams (keys two presses apart,
+// including across a space).
+//
+// Triples: a curve A->B->C through each same-hand trigram, where each of A->B
+// and B->C is either a bigram (adjacent presses, solid) or a skipgram (one
+// press between, dashed).
 //
 // Same-finger events get a glass "bump" that swells and fades: a pill joining
 // the two keys, for a same-finger bigram (two different keys pressed back to
@@ -515,6 +521,10 @@ module Trace = {
 
   // Trails are off so the same-finger bumps read on their own; flip to compare.
   let showTrails = false
+
+  type mode = Pairs | Triples
+  let mode = Triples
+
   let fadeMs = 1000
   let bumpMs = 450
 
@@ -531,11 +541,13 @@ module Trace = {
 
   type color = [#red | #yellow1 | #green | #blue | #indigo | #white]
 
+  type gram = Bigram | Skipgram
+
   let wordColor: ref<option<color>> = ref(None)
   let lastLeft = ref(None)
   let lastRight = ref(None)
-  // the last two keypresses of any kind, newest first
-  let recent: ref<array<string>> = ref([])
+  // the most recent keypresses of any kind, newest first
+  let history: ref<array<string>> = ref([])
 
   let center = (element, origin) => {
     let r = element->Dom.Element.getBoundingClientRect
@@ -550,6 +562,27 @@ module Trace = {
 
   let sameHand = (a, b) => fst(kcHF(a)) == fst(kcHF(b))
 
+  // Same-hand trigrams (a, a->b, b, b->c) ending at the alpha key c, given the
+  // preceding keypresses newest first.
+  let trigrams = (recent, c) => {
+    let alphaAt = i =>
+      switch recent->Array.get(i) {
+      | Some(k) if isAlpha(k) => Some(k)
+      | _ => None
+      }
+    let gap = gram => gram == Bigram ? 0 : 1
+    [Bigram, Skipgram]->Array.flatMap(bc => {
+      let iB = gap(bc)
+      [Bigram, Skipgram]->Array.filterMap(ab => {
+        switch (alphaAt(iB + 1 + gap(ab)), alphaAt(iB)) {
+        | (Some(a), Some(b)) if a != b && b != c && sameHand(a, b) && sameHand(b, c) =>
+          Some((a, ab, b, bc))
+        | _ => None
+        }
+      })
+    })
+  }
+
   // Quadratic control point for a curve from (x1, y1) to (x2, y2): the midpoint
   // pushed sideways by a fraction of the segment length. The sign of the bow
   // picks the side, so a->b and b->a don't overlap; skipgrams bow the other way.
@@ -558,31 +591,61 @@ module Trace = {
     ((x1 +. x2) /. 2. -. (y2 -. y1) *. bow, (y1 +. y2) /. 2. +. (x2 -. x1) *. bow)
   }
 
+  // Control points for the two halves of a curve a->b->c that passes smoothly
+  // through b: both share the tangent at b, parallel to a->c. When a == c there
+  // is no such tangent, so each half bows on its own, which draws a loop.
+  let trigramControls = ((ax, ay) as a, (bx, by) as b, (cx, cy) as c) =>
+    if ax == cx && ay == cy {
+      (controlPoint(~skip=false, a, b), controlPoint(~skip=false, b, c))
+    } else {
+      let tx = (cx -. ax) *. 0.25
+      let ty = (cy -. ay) *. 0.25
+      ((bx -. tx, by -. ty), (bx +. tx, by +. ty))
+    }
+
+  let stroke = (svg, ~skip, (x1, y1), (cx, cy), (x2, y2), color) => {
+    let f = Float.toString
+    let path = document->Dom.Document.createElementNS("http://www.w3.org/2000/svg", "path")
+    path->Dom.Element.setAttribute("d", `M ${f(x1)} ${f(y1)} Q ${f(cx)} ${f(cy)} ${f(x2)} ${f(y2)}`)
+    path->Dom.Element.setAttribute("fill", "none")
+    path->Dom.Element.setAttribute("stroke", c(color))
+    path->Dom.Element.setAttribute("stroke-width", skip ? "3" : "6")
+    if skip {
+      path->Dom.Element.setAttribute("stroke-dasharray", "2 8")
+    }
+    path->Dom.Element.setAttribute("stroke-linecap", "round")
+    svg->Dom.Element.appendChild(~child=path)
+    let timing = {
+      "duration": fadeMs,
+      "iterations": 1,
+      "easing": "ease-in",
+      "fill": "forwards",
+    }
+    let _ = path->Dom.Element.animate({"opacity": [0.9, 0.]}, timing)
+    let _ = setTimeout(() => path->Dom.Element.remove, fadeMs)
+  }
+
+  let byId = id => document->Dom.Document.getElementById(id)
+
   let draw = (~skip=false, src, dst, color) => {
     switch (byId("Traces"), byId(src), byId(dst)) {
     | (Some(svg), Some(a), Some(b)) =>
-      let (x1, y1) as p1 = center(a, svg)
-      let (x2, y2) as p2 = center(b, svg)
-      let (cx, cy) = controlPoint(~skip, p1, p2)
-      let f = Float.toString
-      let path = document->Dom.Document.createElementNS("http://www.w3.org/2000/svg", "path")
-      path->Dom.Element.setAttribute("d", `M ${f(x1)} ${f(y1)} Q ${f(cx)} ${f(cy)} ${f(x2)} ${f(y2)}`)
-      path->Dom.Element.setAttribute("fill", "none")
-      path->Dom.Element.setAttribute("stroke", c(color))
-      path->Dom.Element.setAttribute("stroke-width", skip ? "3" : "6")
-      if skip {
-        path->Dom.Element.setAttribute("stroke-dasharray", "2 8")
-      }
-      path->Dom.Element.setAttribute("stroke-linecap", "round")
-      svg->Dom.Element.appendChild(~child=path)
-      let timing = {
-        "duration": fadeMs,
-        "iterations": 1,
-        "easing": "ease-in",
-        "fill": "forwards",
-      }
-      let _ = path->Dom.Element.animate({"opacity": [0.9, 0.]}, timing)
-      let _ = setTimeout(() => path->Dom.Element.remove, fadeMs)
+      let p1 = center(a, svg)
+      let p2 = center(b, svg)
+      stroke(svg, ~skip, p1, controlPoint(~skip, p1, p2), p2, color)
+    | _ => ()
+    }
+  }
+
+  let drawTrigram = ((a, ab, b, bc), c, color) => {
+    switch (byId("Traces"), byId(a), byId(b), byId(c)) {
+    | (Some(svg), Some(a), Some(b), Some(c)) =>
+      let pa = center(a, svg)
+      let pb = center(b, svg)
+      let pc = center(c, svg)
+      let (c1, c2) = trigramControls(pa, pb, pc)
+      stroke(svg, ~skip=ab == Skipgram, pa, c1, pb, color)
+      stroke(svg, ~skip=bc == Skipgram, pb, c2, pc, color)
     | _ => ()
     }
   }
@@ -701,7 +764,7 @@ module Trace = {
     wordColor := None
     lastLeft := None
     lastRight := None
-    recent := []
+    history := []
   }
 
   let press = (keycode, color: color) => {
@@ -711,34 +774,39 @@ module Trace = {
       lastRight := None
     }
     if isAlpha(keycode) {
-      switch recent.contents->Array.get(0) {
+      switch history.contents->Array.get(0) {
       | Some(prev) if sameFinger(prev, keycode) =>
         bumpLine(~look=Glow, prev, keycode, color)
         bumpKey(keycode, color)
       | _ => ()
       }
-      switch recent.contents->Array.get(1) {
+      switch history.contents->Array.get(1) {
       | Some(src) if sameFinger(src, keycode) => bumpLine(~look=Shadow, src, keycode, color)
       | _ => ()
       }
     }
-    if isAlpha(keycode) {
-      let last = switch kcHF(keycode) {
-      | (#l, _) => lastLeft
-      | (#r, _) => lastRight
-      }
-      switch last.contents {
-      | Some(src) if showTrails && src != keycode => draw(src, keycode, color)
-      | _ => ()
-      }
-      last := Some(keycode)
-      switch recent.contents->Array.get(1) {
-      | Some(src) if showTrails && src != keycode && isAlpha(src) && sameHand(src, keycode) =>
-        draw(~skip=true, src, keycode, color)
-      | _ => ()
+    if showTrails && isAlpha(keycode) {
+      switch mode {
+      | Pairs =>
+        let last = switch kcHF(keycode) {
+        | (#l, _) => lastLeft
+        | (#r, _) => lastRight
+        }
+        switch last.contents {
+        | Some(src) if src != keycode => draw(src, keycode, color)
+        | _ => ()
+        }
+        last := Some(keycode)
+        switch history.contents->Array.get(1) {
+        | Some(src) if src != keycode && isAlpha(src) && sameHand(src, keycode) =>
+          draw(~skip=true, src, keycode, color)
+        | _ => ()
+        }
+      | Triples =>
+        trigrams(history.contents, keycode)->Array.forEach(t => drawTrigram(t, keycode, color))
       }
     }
-    recent := [keycode]->Array.concat(recent.contents->Array.slice(~start=0, ~end=1))
+    history := [keycode]->Array.concat(history.contents->Array.slice(~start=0, ~end=3))
   }
 }
 
