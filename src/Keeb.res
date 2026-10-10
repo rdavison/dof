@@ -502,6 +502,8 @@ let kcHF = keycode => {
 
 // Fading per-hand curves between consecutive keypresses within a word.
 // A word is a run of keypresses sharing the same active color.
+// Same-hand skipgrams (keys two presses apart, including across a space)
+// get a thinner dashed curve bowed the other way.
 //
 // Same-finger events get a glass "bump" that swells and fades: a pill joining
 // the two keys, for a same-finger bigram (two different keys pressed back to
@@ -546,20 +548,26 @@ module Trace = {
 
   let byId = id => document->Dom.Document.getElementById(id)
 
-  let draw = (src, dst, color) => {
+  let sameHand = (a, b) => fst(kcHF(a)) == fst(kcHF(b))
+
+  let draw = (~skip=false, src, dst, color) => {
     switch (byId("Traces"), byId(src), byId(dst)) {
     | (Some(svg), Some(a), Some(b)) =>
       let (x1, y1) = center(a, svg)
       let (x2, y2) = center(b, svg)
-      // bow sideways so a->b and b->a don't overlap
-      let cx = (x1 +. x2) /. 2. -. (y2 -. y1) *. 0.2
-      let cy = (y1 +. y2) /. 2. +. (x2 -. x1) *. 0.2
+      // bow sideways so a->b and b->a don't overlap; skipgrams bow the other way
+      let bow = skip ? -0.3 : 0.2
+      let cx = (x1 +. x2) /. 2. -. (y2 -. y1) *. bow
+      let cy = (y1 +. y2) /. 2. +. (x2 -. x1) *. bow
       let f = Float.toString
       let path = document->Dom.Document.createElementNS("http://www.w3.org/2000/svg", "path")
       path->Dom.Element.setAttribute("d", `M ${f(x1)} ${f(y1)} Q ${f(cx)} ${f(cy)} ${f(x2)} ${f(y2)}`)
       path->Dom.Element.setAttribute("fill", "none")
       path->Dom.Element.setAttribute("stroke", c(color))
-      path->Dom.Element.setAttribute("stroke-width", "6")
+      path->Dom.Element.setAttribute("stroke-width", skip ? "3" : "6")
+      if skip {
+        path->Dom.Element.setAttribute("stroke-dasharray", "2 8")
+      }
       path->Dom.Element.setAttribute("stroke-linecap", "round")
       svg->Dom.Element.appendChild(~child=path)
       let timing = {
@@ -709,7 +717,6 @@ module Trace = {
       | _ => ()
       }
     }
-    recent := [keycode]->Array.concat(recent.contents->Array.slice(~start=0, ~end=1))
     if isAlpha(keycode) {
       let last = switch kcHF(keycode) {
       | (#l, _) => lastLeft
@@ -720,7 +727,13 @@ module Trace = {
       | _ => ()
       }
       last := Some(keycode)
+      switch recent.contents->Array.get(1) {
+      | Some(src) if showTrails && src != keycode && isAlpha(src) && sameHand(src, keycode) =>
+        draw(~skip=true, src, keycode, color)
+      | _ => ()
+      }
     }
+    recent := [keycode]->Array.concat(recent.contents->Array.slice(~start=0, ~end=1))
   }
 }
 
