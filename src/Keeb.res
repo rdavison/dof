@@ -502,6 +502,8 @@ let kcHF = keycode => {
 
 // Fading per-hand curves between consecutive keypresses within a word.
 // A word is a run of keypresses sharing the same active color.
+// Same-hand skipgrams (keys two presses apart, including across a space)
+// get a thinner dashed curve bowed the other way.
 module Trace = {
   module Dom = Webapi.Dom
 
@@ -523,6 +525,9 @@ module Trace = {
   let wordColor: ref<option<color>> = ref(None)
   let lastLeft = ref(None)
   let lastRight = ref(None)
+  // the two most recent keypresses of any kind, newest first
+  let prev1 = ref(None)
+  let prev2 = ref(None)
 
   let center = (element, origin) => {
     let r = element->Dom.Element.getBoundingClientRect
@@ -533,21 +538,27 @@ module Trace = {
     )
   }
 
-  let draw = (src, dst, color) => {
+  let sameHand = (a, b) => fst(kcHF(a)) == fst(kcHF(b))
+
+  let draw = (~skip=false, src, dst, color) => {
     let byId = id => document->Dom.Document.getElementById(id)
     switch (byId("Traces"), byId(src), byId(dst)) {
     | (Some(svg), Some(a), Some(b)) =>
       let (x1, y1) = center(a, svg)
       let (x2, y2) = center(b, svg)
-      // bow sideways so a->b and b->a don't overlap
-      let cx = (x1 +. x2) /. 2. -. (y2 -. y1) *. 0.2
-      let cy = (y1 +. y2) /. 2. +. (x2 -. x1) *. 0.2
+      // bow sideways so a->b and b->a don't overlap; skipgrams bow the other way
+      let bow = skip ? -0.3 : 0.2
+      let cx = (x1 +. x2) /. 2. -. (y2 -. y1) *. bow
+      let cy = (y1 +. y2) /. 2. +. (x2 -. x1) *. bow
       let f = Float.toString
       let path = document->Dom.Document.createElementNS("http://www.w3.org/2000/svg", "path")
       path->Dom.Element.setAttribute("d", `M ${f(x1)} ${f(y1)} Q ${f(cx)} ${f(cy)} ${f(x2)} ${f(y2)}`)
       path->Dom.Element.setAttribute("fill", "none")
       path->Dom.Element.setAttribute("stroke", c(color))
-      path->Dom.Element.setAttribute("stroke-width", "6")
+      path->Dom.Element.setAttribute("stroke-width", skip ? "3" : "6")
+      if skip {
+        path->Dom.Element.setAttribute("stroke-dasharray", "2 8")
+      }
       path->Dom.Element.setAttribute("stroke-linecap", "round")
       svg->Dom.Element.appendChild(~child=path)
       let timing = {
@@ -578,7 +589,14 @@ module Trace = {
       | _ => ()
       }
       last := Some(keycode)
+      switch prev2.contents {
+      | Some(src) if src != keycode && isAlpha(src) && sameHand(src, keycode) =>
+        draw(~skip=true, src, keycode, color)
+      | _ => ()
+      }
     }
+    prev2 := prev1.contents
+    prev1 := Some(keycode)
   }
 }
 
