@@ -550,15 +550,20 @@ module Trace = {
 
   let sameHand = (a, b) => fst(kcHF(a)) == fst(kcHF(b))
 
+  // Quadratic control point for a curve from (x1, y1) to (x2, y2): the midpoint
+  // pushed sideways by a fraction of the segment length. The sign of the bow
+  // picks the side, so a->b and b->a don't overlap; skipgrams bow the other way.
+  let controlPoint = (~skip, (x1, y1), (x2, y2)) => {
+    let bow = skip ? -0.3 : 0.2
+    ((x1 +. x2) /. 2. -. (y2 -. y1) *. bow, (y1 +. y2) /. 2. +. (x2 -. x1) *. bow)
+  }
+
   let draw = (~skip=false, src, dst, color) => {
     switch (byId("Traces"), byId(src), byId(dst)) {
     | (Some(svg), Some(a), Some(b)) =>
-      let (x1, y1) = center(a, svg)
-      let (x2, y2) = center(b, svg)
-      // bow sideways so a->b and b->a don't overlap; skipgrams bow the other way
-      let bow = skip ? -0.3 : 0.2
-      let cx = (x1 +. x2) /. 2. -. (y2 -. y1) *. bow
-      let cy = (y1 +. y2) /. 2. +. (x2 -. x1) *. bow
+      let (x1, y1) as p1 = center(a, svg)
+      let (x2, y2) as p2 = center(b, svg)
+      let (cx, cy) = controlPoint(~skip, p1, p2)
       let f = Float.toString
       let path = document->Dom.Document.createElementNS("http://www.w3.org/2000/svg", "path")
       path->Dom.Element.setAttribute("d", `M ${f(x1)} ${f(y1)} Q ${f(cx)} ${f(cy)} ${f(x2)} ${f(y2)}`)
