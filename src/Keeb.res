@@ -307,6 +307,62 @@ module Ansi = {
     right_shift: ["shift"],
   }
 
+  // Every character-bearing physical key, named by its KeyboardEvent code and
+  // paired with the labels a layout puts on it. The modifiers are left out:
+  // they carry no characters, so nothing can be typed on them.
+  let keycodes = (t: t) => [
+    ("Backquote", t.tilde),
+    ("Digit1", t.one),
+    ("Digit2", t.two),
+    ("Digit3", t.three),
+    ("Digit4", t.four),
+    ("Digit5", t.five),
+    ("Digit6", t.six),
+    ("Digit7", t.seven),
+    ("Digit8", t.eight),
+    ("Digit9", t.nine),
+    ("Digit0", t.zero),
+    ("Minus", t.hyphen),
+    ("Equal", t.equal),
+    ("KeyQ", t.q),
+    ("KeyW", t.w),
+    ("KeyE", t.e),
+    ("KeyR", t.r),
+    ("KeyT", t.t),
+    ("KeyY", t.y),
+    ("KeyU", t.u),
+    ("KeyI", t.i),
+    ("KeyO", t.o),
+    ("KeyP", t.p),
+    ("BracketLeft", t.open_bracket),
+    ("BracketRight", t.close_bracket),
+    ("Backslash", t.backslash),
+    ("KeyA", t.a),
+    ("KeyS", t.s),
+    ("KeyD", t.d),
+    ("KeyF", t.f),
+    ("KeyG", t.g),
+    ("KeyH", t.h),
+    ("KeyJ", t.j),
+    ("KeyK", t.k),
+    ("KeyL", t.l),
+    ("Semicolon", t.semicolon),
+    ("Quote", t.quote),
+    ("KeyZ", t.z),
+    ("KeyX", t.x),
+    ("KeyC", t.c),
+    ("KeyV", t.v),
+    ("KeyB", t.b),
+    ("KeyN", t.n),
+    ("KeyM", t.m),
+    ("Comma", t.comma),
+    ("Period", t.period),
+    ("Slash", t.slash),
+  ]
+
+  // Note: this predates the `graphite` record above and no longer agrees with
+  // it. Only `runText` still reads it; the live keyboard goes through the
+  // record, so derive from `keycodes` rather than from here.
   let graphite2Keycode = char =>
     switch char {
     | "`" | "~" => "Backquote"
@@ -530,12 +586,39 @@ module Trace = {
 
   let isAlpha = keycode =>
     switch keycode {
-    | "KeyQ" | "KeyW" | "KeyE" | "KeyR" | "KeyT" | "KeyY" | "KeyU" | "KeyI" | "KeyO" | "KeyP"
-    | "BracketLeft" | "BracketRight"
-    | "KeyA" | "KeyS" | "KeyD" | "KeyF" | "KeyG" | "KeyH" | "KeyJ" | "KeyK" | "KeyL"
-    | "Semicolon" | "Quote"
-    | "KeyZ" | "KeyX" | "KeyC" | "KeyV" | "KeyB" | "KeyN" | "KeyM"
-    | "Comma" | "Period" | "Slash" => true
+    | "KeyQ"
+    | "KeyW"
+    | "KeyE"
+    | "KeyR"
+    | "KeyT"
+    | "KeyY"
+    | "KeyU"
+    | "KeyI"
+    | "KeyO"
+    | "KeyP"
+    | "BracketLeft"
+    | "BracketRight"
+    | "KeyA"
+    | "KeyS"
+    | "KeyD"
+    | "KeyF"
+    | "KeyG"
+    | "KeyH"
+    | "KeyJ"
+    | "KeyK"
+    | "KeyL"
+    | "Semicolon"
+    | "Quote"
+    | "KeyZ"
+    | "KeyX"
+    | "KeyC"
+    | "KeyV"
+    | "KeyB"
+    | "KeyN"
+    | "KeyM"
+    | "Comma"
+    | "Period"
+    | "Slash" => true
     | _ => false
     }
 
@@ -557,8 +640,6 @@ module Trace = {
       Dom.DomRect.top(r) -. Dom.DomRect.top(o) +. Dom.DomRect.height(r) /. 2.,
     )
   }
-
-  let byId = id => document->Dom.Document.getElementById(id)
 
   let sameHand = (a, b) => fst(kcHF(a)) == fst(kcHF(b))
 
@@ -1172,159 +1253,168 @@ module Keyboard = {
     "ArrowRight",
   ]
 
+  // The bare ANSI key grid, with the overlay svg the Trace module draws into.
+  // Anything extra goes in as children, positioned against the same wrapper.
+  module Grid = {
+    @react.component
+    let make = (~t: t, ~children: React.element=React.null) =>
+      switch t {
+      | #Ansi({
+          tilde,
+          one,
+          two,
+          three,
+          four,
+          five,
+          six,
+          seven,
+          eight,
+          nine,
+          zero,
+          hyphen,
+          equal,
+          backspace,
+          tab,
+          q,
+          w,
+          e,
+          r,
+          t,
+          y,
+          u,
+          i,
+          o,
+          p,
+          open_bracket,
+          close_bracket,
+          backslash,
+          caps_lock,
+          a,
+          s,
+          d,
+          f,
+          g,
+          h,
+          j,
+          k,
+          l,
+          semicolon,
+          quote,
+          enter,
+          left_shift,
+          z,
+          x,
+          c,
+          v,
+          b,
+          n,
+          m,
+          comma,
+          period,
+          slash,
+          right_shift,
+        }) =>
+        <div className="relative p-[6px] bg-slate-700 rounded-2xl shadow-lg shadow-black">
+          <div className="flex flex-col">
+            <div className="flex flex-row">
+              <Key id="Escape" label={["esc"]} shape={#_1_5} />
+              <Key id="F1" label={["F1"]} shape={#_1} />
+              <Key id="F2" label={["F2"]} shape={#_1} />
+              <Key id="F3" label={["F3"]} shape={#_1} />
+              <Key id="F4" label={["F4"]} shape={#_1} />
+              <Key id="F5" label={["F5"]} shape={#_1} />
+              <Key id="F6" label={["F6"]} shape={#_1} />
+              <Key id="F7" label={["F7"]} shape={#_1} />
+              <Key id="F8" label={["F8"]} shape={#_1} />
+              <Key id="F9" label={["F9"]} shape={#_1} />
+              <Key id="F10" label={["F10"]} shape={#_1} />
+              <Key id="F11" label={["F11"]} shape={#_1} />
+              <Key id="F12" label={["F12"]} shape={#_1} />
+              <Key.Power />
+            </div>
+            <div className="flex flex-row">
+              <Key id="Backquote" label={tilde} shape={#_1} />
+              <Key id="Digit1" label={one} shape={#_1} />
+              <Key id="Digit2" label={two} shape={#_1} />
+              <Key id="Digit3" label={three} shape={#_1} />
+              <Key id="Digit4" label={four} shape={#_1} />
+              <Key id="Digit5" label={five} shape={#_1} />
+              <Key id="Digit6" label={six} shape={#_1} />
+              <Key id="Digit7" label={seven} shape={#_1} />
+              <Key id="Digit8" label={eight} shape={#_1} />
+              <Key id="Digit9" label={nine} shape={#_1} />
+              <Key id="Digit0" label={zero} shape={#_1} />
+              <Key id="Minus" label={hyphen} shape={#_1} />
+              <Key id="Equal" label={equal} shape={#_1} />
+              <Key id="Backspace" label={backspace} shape={#_1_5} />
+            </div>
+            <div className="flex flex-row">
+              <Key id="Tab" label={tab} shape={#_1_5} />
+              <Key id="KeyQ" label={q} shape={#_1} />
+              <Key id="KeyW" label={w} shape={#_1} />
+              <Key id="KeyE" label={e} shape={#_1} />
+              <Key id="KeyR" label={r} shape={#_1} />
+              <Key id="KeyT" label={t} shape={#_1} />
+              <Key id="KeyY" label={y} shape={#_1} />
+              <Key id="KeyU" label={u} shape={#_1} />
+              <Key id="KeyI" label={i} shape={#_1} />
+              <Key id="KeyO" label={o} shape={#_1} />
+              <Key id="KeyP" label={p} shape={#_1} />
+              <Key id="BracketLeft" label={open_bracket} shape={#_1} />
+              <Key id="BracketRight" label={close_bracket} shape={#_1} />
+              <Key id="Backslash" label={backslash} shape={#_1} />
+            </div>
+            <div className="flex flex-row">
+              <Key id="ControlRight" label={caps_lock} shape={#_1_75} />
+              <Key id="KeyA" label={a} shape={#_1} />
+              <Key id="KeyS" label={s} shape={#_1} />
+              <Key id="KeyD" label={d} shape={#_1} />
+              <Key id="KeyF" label={f} shape={#_1} />
+              <Key id="KeyG" label={g} shape={#_1} />
+              <Key id="KeyH" label={h} shape={#_1} />
+              <Key id="KeyJ" label={j} shape={#_1} />
+              <Key id="KeyK" label={k} shape={#_1} />
+              <Key id="KeyL" label={l} shape={#_1} />
+              <Key id="Semicolon" label={semicolon} shape={#_1} />
+              <Key id="Quote" label={quote} shape={#_1} />
+              <Key id="Enter" label={enter} shape={#_1_75} />
+            </div>
+            <div className="flex flex-row">
+              <Key id="ShiftLeft" label={left_shift} shape={#_2_25} />
+              <Key id="KeyZ" label={z} shape={#_1} />
+              <Key id="KeyX" label={x} shape={#_1} />
+              <Key id="KeyC" label={c} shape={#_1} />
+              <Key id="KeyV" label={v} shape={#_1} />
+              <Key id="KeyB" label={b} shape={#_1} />
+              <Key id="KeyN" label={n} shape={#_1} />
+              <Key id="KeyM" label={m} shape={#_1} />
+              <Key id="Comma" label={comma} shape={#_1} />
+              <Key id="Period" label={period} shape={#_1} />
+              <Key id="Slash" label={slash} shape={#_1} />
+              <Key id="ShiftRight" label={right_shift} shape={#_2_25} />
+            </div>
+            <div className="flex flex-row">
+              <Key label={["fn"]} shape={#_1} />
+              <Key id="ControlLeft" label={["^"]} shape={#_1} />
+              <Key id="AltLeft" label={["⌥"]} shape={#_1} />
+              <Key id="OSLeft" label={["⌘"]} shape={#_1_25} />
+              <Key id="Space" label={[""]} shape={#_5} />
+              <Key id="OSRight" label={["⌘"]} shape={#_1_25} />
+              <Key id="AltRight" label={["⌥"]} shape={#_1} />
+              <Key.Nav />
+            </div>
+          </div>
+          <svg id="Traces" className="absolute inset-0 w-full h-full pointer-events-none" />
+          <div id="Bumps" className="absolute inset-0 pointer-events-none" />
+          children
+        </div>
+      }
+  }
+
   @react.component
   let make = (~t: t, ~setState, ~nextText) => {
     useListener(t, ~setState, ~nextText)
-    switch t {
-    | #Ansi({
-        tilde,
-        one,
-        two,
-        three,
-        four,
-        five,
-        six,
-        seven,
-        eight,
-        nine,
-        zero,
-        hyphen,
-        equal,
-        backspace,
-        tab,
-        q,
-        w,
-        e,
-        r,
-        t,
-        y,
-        u,
-        i,
-        o,
-        p,
-        open_bracket,
-        close_bracket,
-        backslash,
-        caps_lock,
-        a,
-        s,
-        d,
-        f,
-        g,
-        h,
-        j,
-        k,
-        l,
-        semicolon,
-        quote,
-        enter,
-        left_shift,
-        z,
-        x,
-        c,
-        v,
-        b,
-        n,
-        m,
-        comma,
-        period,
-        slash,
-        right_shift,
-      }) =>
-      <div className="relative p-[6px] bg-slate-700 rounded-2xl shadow-lg shadow-black">
-        <div className="flex flex-col">
-          <div className="flex flex-row">
-            <Key id="Escape" label={["esc"]} shape={#_1_5} />
-            <Key id="F1" label={["F1"]} shape={#_1} />
-            <Key id="F2" label={["F2"]} shape={#_1} />
-            <Key id="F3" label={["F3"]} shape={#_1} />
-            <Key id="F4" label={["F4"]} shape={#_1} />
-            <Key id="F5" label={["F5"]} shape={#_1} />
-            <Key id="F6" label={["F6"]} shape={#_1} />
-            <Key id="F7" label={["F7"]} shape={#_1} />
-            <Key id="F8" label={["F8"]} shape={#_1} />
-            <Key id="F9" label={["F9"]} shape={#_1} />
-            <Key id="F10" label={["F10"]} shape={#_1} />
-            <Key id="F11" label={["F11"]} shape={#_1} />
-            <Key id="F12" label={["F12"]} shape={#_1} />
-            <Key.Power />
-          </div>
-          <div className="flex flex-row">
-            <Key id="Backquote" label={tilde} shape={#_1} />
-            <Key id="Digit1" label={one} shape={#_1} />
-            <Key id="Digit2" label={two} shape={#_1} />
-            <Key id="Digit3" label={three} shape={#_1} />
-            <Key id="Digit4" label={four} shape={#_1} />
-            <Key id="Digit5" label={five} shape={#_1} />
-            <Key id="Digit6" label={six} shape={#_1} />
-            <Key id="Digit7" label={seven} shape={#_1} />
-            <Key id="Digit8" label={eight} shape={#_1} />
-            <Key id="Digit9" label={nine} shape={#_1} />
-            <Key id="Digit0" label={zero} shape={#_1} />
-            <Key id="Minus" label={hyphen} shape={#_1} />
-            <Key id="Equal" label={equal} shape={#_1} />
-            <Key id="Backspace" label={backspace} shape={#_1_5} />
-          </div>
-          <div className="flex flex-row">
-            <Key id="Tab" label={tab} shape={#_1_5} />
-            <Key id="KeyQ" label={q} shape={#_1} />
-            <Key id="KeyW" label={w} shape={#_1} />
-            <Key id="KeyE" label={e} shape={#_1} />
-            <Key id="KeyR" label={r} shape={#_1} />
-            <Key id="KeyT" label={t} shape={#_1} />
-            <Key id="KeyY" label={y} shape={#_1} />
-            <Key id="KeyU" label={u} shape={#_1} />
-            <Key id="KeyI" label={i} shape={#_1} />
-            <Key id="KeyO" label={o} shape={#_1} />
-            <Key id="KeyP" label={p} shape={#_1} />
-            <Key id="BracketLeft" label={open_bracket} shape={#_1} />
-            <Key id="BracketRight" label={close_bracket} shape={#_1} />
-            <Key id="Backslash" label={backslash} shape={#_1} />
-          </div>
-          <div className="flex flex-row">
-            <Key id="ControlRight" label={caps_lock} shape={#_1_75} />
-            <Key id="KeyA" label={a} shape={#_1} />
-            <Key id="KeyS" label={s} shape={#_1} />
-            <Key id="KeyD" label={d} shape={#_1} />
-            <Key id="KeyF" label={f} shape={#_1} />
-            <Key id="KeyG" label={g} shape={#_1} />
-            <Key id="KeyH" label={h} shape={#_1} />
-            <Key id="KeyJ" label={j} shape={#_1} />
-            <Key id="KeyK" label={k} shape={#_1} />
-            <Key id="KeyL" label={l} shape={#_1} />
-            <Key id="Semicolon" label={semicolon} shape={#_1} />
-            <Key id="Quote" label={quote} shape={#_1} />
-            <Key id="Enter" label={enter} shape={#_1_75} />
-          </div>
-          <div className="flex flex-row">
-            <Key id="ShiftLeft" label={left_shift} shape={#_2_25} />
-            <Key id="KeyZ" label={z} shape={#_1} />
-            <Key id="KeyX" label={x} shape={#_1} />
-            <Key id="KeyC" label={c} shape={#_1} />
-            <Key id="KeyV" label={v} shape={#_1} />
-            <Key id="KeyB" label={b} shape={#_1} />
-            <Key id="KeyN" label={n} shape={#_1} />
-            <Key id="KeyM" label={m} shape={#_1} />
-            <Key id="Comma" label={comma} shape={#_1} />
-            <Key id="Period" label={period} shape={#_1} />
-            <Key id="Slash" label={slash} shape={#_1} />
-            <Key id="ShiftRight" label={right_shift} shape={#_2_25} />
-          </div>
-          <div className="flex flex-row">
-            <Key label={["fn"]} shape={#_1} />
-            <Key id="ControlLeft" label={["^"]} shape={#_1} />
-            <Key id="AltLeft" label={["⌥"]} shape={#_1} />
-            <Key id="OSLeft" label={["⌘"]} shape={#_1_25} />
-            <Key id="Space" label={[""]} shape={#_5} />
-            <Key id="OSRight" label={["⌘"]} shape={#_1_25} />
-            <Key id="AltRight" label={["⌥"]} shape={#_1} />
-            <Key.Nav />
-          </div>
-        </div>
-        <svg id="Traces" className="absolute inset-0 w-full h-full pointer-events-none" />
-        <div id="Bumps" className="absolute inset-0 pointer-events-none" />
-      </div>
-    }
+    <Grid t />
   }
 }
 
