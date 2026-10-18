@@ -556,6 +556,127 @@ let kcHF = keycode => {
   }
 }
 
+// Alternate fingerings recorded on /alt-fingerings, keyed by the physical key
+// run of a whole word. Where an entry exists it overrides the default finger
+// for every key in the word, so `judge` is fingered 4 3 7 8 3 rather than
+// resting both j and u on the left index.
+module Fingering = {
+  type entry = {
+    keys: array<string>,
+    status: string,
+    fingers: array<string>,
+  }
+
+  let code = hf =>
+    switch hf {
+    | (#l, #p) => "lp"
+    | (#l, #r) => "lr"
+    | (#l, #m) => "lm"
+    | (#l, #i) => "li"
+    | (#l, #t) => "lt"
+    | (#r, #i) => "ri"
+    | (#r, #m) => "rm"
+    | (#r, #r) => "rr"
+    | (#r, #p) => "rp"
+    | (#r, #t) => "rt"
+    }
+
+  let sigOf = keys => keys->Array.joinWith(" ")
+
+  // Which physical key carries a character, read off the record that draws the
+  // board. Ansi.graphite2Keycode is an older layout that no longer agrees.
+  let charKey = {
+    let d = Dict.make()
+    Ansi.keycodes(Ansi.graphite)->Array.forEach(((keycode, labels)) =>
+      labels->Array.forEach(label => {
+        let ch = label->String.toLowerCase
+        switch d->Dict.get(ch) {
+        | Some(_) => () // a character on two keys: the first one wins
+        | None => d->Dict.set(ch, keycode)
+        }
+      })
+    )
+    d
+  }
+
+  // Only "alt" entries carry a fingering; "none" means the default is the only
+  // way to type the word, which is what a lookup miss already yields.
+  let table: ref<Dict.t<array<string>>> = ref(Dict.make())
+
+  let install = entries => {
+    let d = Dict.make()
+    entries->Array.forEach(e =>
+      if e.status == "alt" && e.fingers->Array.length == e.keys->Array.length {
+        d->Dict.set(sigOf(e.keys), e.fingers)
+      }
+    )
+    table := d
+  }
+
+  let defaults = keys => keys->Array.map(k => code(kcHF(k)))
+
+  let forKeys = keys =>
+    switch table.contents->Dict.get(sigOf(keys)) {
+    | Some(fingers) => fingers
+    | None => defaults(keys)
+    }
+
+  // The word surrounding `offset` in `text`, as the review page tokenizes it:
+  // a run of [a-z'-] with leading and trailing apostrophes and hyphens dropped.
+  let isWordChar = ch => (ch >= "a" && ch <= "z") || ch == "'" || ch == "-"
+  let isEdge = ch => ch == "'" || ch == "-"
+
+  let charAt = (text, i) =>
+    i < 0 || i >= text->String.length ? "" : text->Js.String2.charAt(i)->String.toLowerCase
+
+  let wordAround = (text, offset) => {
+    if !isWordChar(charAt(text, offset)) {
+      None
+    } else {
+      let start = ref(offset)
+      while isWordChar(charAt(text, start.contents - 1)) {
+        start := start.contents - 1
+      }
+      let stop = ref(offset)
+      while isWordChar(charAt(text, stop.contents + 1)) {
+        stop := stop.contents + 1
+      }
+      while start.contents < stop.contents && isEdge(charAt(text, start.contents)) {
+        start := start.contents + 1
+      }
+      while stop.contents > start.contents && isEdge(charAt(text, stop.contents)) {
+        stop := stop.contents - 1
+      }
+      if offset < start.contents || offset > stop.contents {
+        None
+      } else {
+        let keys = []
+        for i in start.contents to stop.contents {
+          switch charKey->Dict.get(charAt(text, i)) {
+          | Some(keycode) => keys->Array.push(keycode)
+          | None => ()
+          }
+        }
+        keys->Array.length == stop.contents - start.contents + 1
+          ? Some(keys, offset - start.contents)
+          : None
+      }
+    }
+  }
+
+  // The finger that actually presses the key at `offset`, consulting the
+  // recorded fingering for the word it sits in.
+  let at = (text, offset, keycode) =>
+    switch wordAround(text, offset) {
+    | Some(keys, i) =>
+      switch forKeys(keys)->Array.get(i) {
+      | Some(f) => f
+      | None => code(kcHF(keycode))
+      }
+    | None => code(kcHF(keycode))
+    }
+}
+
 // Fading per-hand curves between keypresses.
 // A word is a run of keypresses sharing the same active color.
 //
@@ -566,6 +687,10 @@ let kcHF = keycode => {
 // Triples: a curve A->B->C through each same-hand trigram, where each of A->B
 // and B->C is either a bigram (adjacent presses, solid) or a skipgram (one
 // press between, dashed).
+//
+// Fingers: one curve per finger that actually travels, using the alternate
+// fingerings in `Fingering`. Nothing is drawn between two keys pressed by
+// different fingers, however close together they fall.
 //
 // Same-finger events get a glass "bump" that swells and fades: a pill joining
 // the two keys, for a same-finger bigram (two different keys pressed back to
@@ -578,8 +703,8 @@ module Trace = {
   // Trails are off so the same-finger bumps read on their own; flip to compare.
   let showTrails = false
 
-  type mode = Pairs | Triples
-  let mode = Triples
+  type mode = Pairs | Triples | Fingers
+  let mode = ref(Triples)
 
   let fadeMs = 1000
   let bumpMs = 450
@@ -631,6 +756,8 @@ module Trace = {
   let lastRight = ref(None)
   // the most recent keypresses of any kind, newest first
   let history: ref<array<string>> = ref([])
+  // Fingers mode: the key each finger last touched, by two-letter finger code.
+  let lastByFinger: ref<Dict.t<string>> = ref(Dict.make())
 
   let center = (element, origin) => {
     let r = element->Dom.Element.getBoundingClientRect
@@ -846,13 +973,17 @@ module Trace = {
     lastLeft := None
     lastRight := None
     history := []
+    lastByFinger := Dict.make()
   }
 
-  let press = (keycode, color: color) => {
+  // `finger` is the two-letter code of the finger that really presses this key,
+  // which is the default for the key unless the word has a recorded alternate.
+  let press = (keycode, color: color, ~finger) => {
     if wordColor.contents != Some(color) {
       wordColor := Some(color)
       lastLeft := None
       lastRight := None
+      lastByFinger := Dict.make()
     }
     if isAlpha(keycode) {
       switch history.contents->Array.get(0) {
@@ -867,7 +998,13 @@ module Trace = {
       }
     }
     if showTrails && isAlpha(keycode) {
-      switch mode {
+      switch mode.contents {
+      | Fingers =>
+        switch lastByFinger.contents->Dict.get(finger) {
+        | Some(src) if src != keycode => draw(src, keycode, color)
+        | _ => ()
+        }
+        lastByFinger.contents->Dict.set(finger, keycode)
       | Pairs =>
         let last = switch kcHF(keycode) {
         | (#l, _) => lastLeft
@@ -1143,7 +1280,7 @@ module Keyboard = {
             color
           }
           sim(kc, color)
-          Trace.press(kc, color)
+          Trace.press(kc, color, ~finger=Fingering.at(text, offset, kc))
           (i + 1, text, color, #white)
         } else {
           (i + 1, text, color, #red)
@@ -1418,11 +1555,35 @@ module Keyboard = {
   }
 }
 
-type props = {corpus: corpus}
+type fingeringFile = {
+  version: int,
+  entries: array<Fingering.entry>,
+}
+
+@scope("JSON") @val external parseFingerings: string => fingeringFile = "parse"
+
+type props = {
+  corpus: corpus,
+  fingerings: array<Fingering.entry>,
+}
 
 let getStaticProps: Next.GetStaticProps.t<props, 'params, 'previewData> = _context => {
   let data = Node.Fs.readFileAsUtf8Sync("corpus/english.json")
-  let props = {corpus: parseCorpus(data)}
+  // A missing or unreadable file just means every word is fingered by default.
+  // Rebuilt field by field: the parsed objects also carry the review page's
+  // words, legends and notes, which would double this page's payload.
+  let fingerings = try {
+    parseFingerings(Node.Fs.readFileAsUtf8Sync("data/alt-fingerings.json")).entries
+    ->Array.filter((e: Fingering.entry) => e.status == "alt")
+    ->Array.map((e: Fingering.entry) => {
+      Fingering.keys: e.keys,
+      status: e.status,
+      fingers: e.fingers,
+    })
+  } catch {
+  | _ => []
+  }
+  let props = {corpus: parseCorpus(data), fingerings}
   Js.Promise.resolve({"props": props})
 }
 
@@ -1446,6 +1607,20 @@ let default = (props: props) => {
 
   let (runState, setRunState) = React.useState(() => #Init)
   let ansi = Ansi.graphite
+
+  // The table is read inside keypress handlers, so it only has to be in place
+  // before the first one; an effect keeps it off the server render path.
+  React.useEffect1(() => {
+    Fingering.install(props.fingerings)
+    None
+  }, [props.fingerings])
+
+  let (traceMode, setTraceMode) = React.useState(() => Trace.mode.contents)
+  React.useEffect1(() => {
+    Trace.mode := traceMode
+    Trace.reset()
+    None
+  }, [traceMode])
 
   // React.useEffect1(() => {
   //   switch runState {
@@ -1480,6 +1655,21 @@ let default = (props: props) => {
         }),
       )}
     </button>
+    <div className="flex gap-2 text-sm font-mono">
+      {React.array(
+        [(Trace.Pairs, "Pairs"), (Trace.Triples, "Triples"), (Trace.Fingers, "Fingers")]->Array.map(
+          ((m, label)) =>
+            <button
+              key=label
+              className={traceMode == m
+                ? "px-3 py-1 rounded bg-slate-200 text-slate-900"
+                : "px-3 py-1 rounded bg-slate-800 text-slate-400"}
+              onClick={_ => setTraceMode(_ => m)}>
+              {React.string(label)}
+            </button>,
+        ),
+      )}
+    </div>
     <Keyboard t={#Ansi(ansi)} setState nextText />
   </div>
 }
