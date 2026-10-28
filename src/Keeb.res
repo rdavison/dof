@@ -1051,7 +1051,7 @@ module Trace = {
 
   // Scales every same-finger bump's intensity; set from the command palette.
   // 0 turns bumps off.
-  let sameFingerWeight = ref(1.)
+  let sameFingerWeight = ref(2.)
 
   // The trail is a glowing comet: brightest and widest at the orb, thinning to
   // nothing some way back along the path. The tail reaches `tailReach` times the
@@ -2397,7 +2397,7 @@ let default = (props: props) => {
   let (falloff, setFalloff) = React.useState(() => true)
   // the weight on same-finger bumps, and the slider that sets it
   let (sameFingerWeight, setSameFingerWeight) = React.useState(() => {
-    Palette.value: 1.,
+    Palette.value: 2.,
     min: 0.,
     max: 3.,
     step: 0.1,
