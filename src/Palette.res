@@ -144,8 +144,9 @@ let make = (~root: page) => {
                     choose(item)
                   }}>
                   <span> {React.string(item.label)} </span>
-                  <span className="text-slate-500">
-                    {React.string(item.checked ? "✓" : item.hint)}
+                  <span className="flex gap-3 text-slate-500">
+                    <span> {React.string(item.hint)} </span>
+                    {item.checked ? <span> {React.string("✓")} </span> : React.null}
                   </span>
                 </li>
               ),

@@ -1500,8 +1500,34 @@ module Keyboard = {
 
   @get external body: Dom.document => Dom.element = "body"
 
-  let handleKC = (ev, ~t, ~setState, ~nextText) => {
-    let kc = Webapi.Dom.KeyboardEvent.code(ev)
+  // How a key press becomes a character. Translate: the OS is on QWERTY, and
+  // each physical key is read through the board's layout. Passthru: the OS is
+  // already on the board's layout, so the character it produced is used as is.
+  type input = Translate | Passthru
+
+  // Keys that drive the page rather than type, however keys are read.
+  let isControl = code =>
+    switch code {
+    | "Escape"
+    | "F1"
+    | "F2"
+    | "F3"
+    | "F4"
+    | "F5"
+    | "F6"
+    | "F7"
+    | "F8"
+    | "F9"
+    | "F10"
+    | "F11"
+    | "F12"
+    | "Tab"
+    | "Backspace" => true
+    | _ => false
+    }
+
+  let handleKC = (ev, ~t, ~input, ~setState, ~nextText) => {
+    let code = Webapi.Dom.KeyboardEvent.code(ev)
     let selectLayer = x => {
       if Webapi.Dom.KeyboardEvent.shiftKey(ev) {
         switch x->Array.get(1) {
@@ -1513,10 +1539,11 @@ module Keyboard = {
       }
     }
 
-    let char = {
+    // Translate: the key's physical position, read through the board's layout.
+    let translated = () => {
       switch t {
       | #Ansi(ansi: Ansi.t) =>
-        switch kc {
+        switch code {
         | "Escape"
         | "F1"
         | "F2"
@@ -1610,6 +1637,19 @@ module Keyboard = {
         }
       }
     }
+    let (kc, char) = switch input {
+    | Passthru if !isControl(code) =>
+      // Passthru: take the character the OS produced, and light the key that
+      // carries it on the board.
+      let key = Webapi.Dom.KeyboardEvent.key(ev)
+      if key->String.length == 1 {
+        let onBoard = Fingering.charKey.contents->Dict.get(key->String.toLowerCase)
+        (onBoard->Option.getWithDefault(code), Some(key))
+      } else {
+        (code, None)
+      }
+    | _ => (code, translated())
+    }
     setState(((i, text, color, highlightColor)) => {
       switch char {
       | None => (i, text, color, highlightColor)
@@ -1632,7 +1672,7 @@ module Keyboard = {
     })
   }
 
-  let onKeyDown = (ev: Webapi.Dom.KeyboardEvent.t, ~t: t, ~setState, ~nextText) => {
+  let onKeyDown = (ev: Webapi.Dom.KeyboardEvent.t, ~t: t, ~input, ~setState, ~nextText) => {
     module K = Webapi.Dom.KeyboardEvent
     let target = K.target(ev)
     let body = document->body
@@ -1640,17 +1680,17 @@ module Keyboard = {
       () // a shortcut, such as the command palette's, not typing
     } else if Obj.magic(target) === body {
       ev->Webapi.Dom.KeyboardEvent.preventDefault
-      ev->handleKC(~t, ~setState, ~nextText)
+      ev->handleKC(~t, ~input, ~setState, ~nextText)
     } else {
       Js.log(ev)
     }
   }
 
-  let useListener = (t, ~setState, ~nextText) => {
+  let useListener = (t, ~input, ~setState, ~nextText) => {
     module Dom = Webapi.Dom
-    let onKeyDown = React.useMemo3(() => {
-      onKeyDown(~t, ~setState, ~nextText)
-    }, (t, setState, nextText))
+    let onKeyDown = React.useMemo4(() => {
+      onKeyDown(~t, ~input, ~setState, ~nextText)
+    }, (t, input, setState, nextText))
     React.useEffect1(() => {
       window->Dom.Window.addKeyDownEventListener(onKeyDown)
       Some(() => window->Dom.Window.removeKeyDownEventListener(onKeyDown))
@@ -1895,8 +1935,8 @@ module Keyboard = {
   }
 
   @react.component
-  let make = (~t: t, ~setState, ~nextText) => {
-    useListener(t, ~setState, ~nextText)
+  let make = (~t: t, ~input, ~setState, ~nextText) => {
+    useListener(t, ~input, ~setState, ~nextText)
     <Grid t />
   }
 }
@@ -1960,15 +2000,35 @@ let default = (props: props) => {
     ->Option.getWithDefault(Ansi.layouts->Array.getUnsafe(0))
   let ansi = layout.board
 
-  // The layout is remembered per browser. Storage can be missing or refuse
-  // access, in which case the board just starts on the default.
-  React.useEffect0(() => {
-    switch try {
-      Dom.Storage.localStorage->Dom.Storage.getItem("layout", _)
+  let (input, setInput) = React.useState(() => Keyboard.Translate)
+  let inputName = input =>
+    switch input {
+    | Keyboard.Translate => "Translate"
+    | Passthru => "Passthru"
+    }
+
+  // Settings are remembered per browser. Storage can be missing or refuse
+  // access, in which case the page just starts on the defaults.
+  let remembered = key =>
+    try {
+      Dom.Storage.localStorage->Dom.Storage.getItem(key, _)
     } catch {
     | _ => None
-    } {
+    }
+  let remember = (key, value) =>
+    try {
+      Dom.Storage.localStorage->Dom.Storage.setItem(key, value, _)
+    } catch {
+    | _ => ()
+    }
+
+  React.useEffect0(() => {
+    switch remembered("layout") {
     | Some(id) if Ansi.layouts->Array.some(l => l.id == id) => setLayoutId(_ => id)
+    | _ => ()
+    }
+    switch remembered("input") {
+    | Some("Passthru") => setInput(_ => Passthru)
     | _ => ()
     }
     None
@@ -1978,13 +2038,14 @@ let default = (props: props) => {
   React.useEffect1(() => {
     Fingering.setLayout(ansi)
     Trace.forget()
-    try {
-      Dom.Storage.localStorage->Dom.Storage.setItem("layout", layoutId, _)
-    } catch {
-    | _ => ()
-    }
+    remember("layout", layoutId)
     None
   }, [layoutId])
+
+  React.useEffect1(() => {
+    remember("input", inputName(input))
+    None
+  }, [input])
 
   let commands: Palette.page = {
     title: "Commands",
@@ -2003,6 +2064,29 @@ let default = (props: props) => {
             checked: l.id == layoutId,
             action: Run(() => setLayoutId(_ => l.id)),
           }),
+        }),
+      },
+      {
+        label: "Choose input…",
+        hint: inputName(input),
+        checked: false,
+        action: Open({
+          title: "Input",
+          placeholder: "Choose how key presses are read…",
+          items: [
+            {
+              Palette.label: "Translate",
+              hint: `OS on QWERTY, keys mapped to ${layout.name}`,
+              checked: input == Translate,
+              action: Run(() => setInput(_ => Translate)),
+            },
+            {
+              label: "Passthru",
+              hint: `OS already on ${layout.name}, keys used as typed`,
+              checked: input == Passthru,
+              action: Run(() => setInput(_ => Passthru)),
+            },
+          ],
         }),
       },
     ],
@@ -2034,7 +2118,7 @@ let default = (props: props) => {
 
   <div className="flex bg-b flex-col gap-8 w-[942px]">
     <div className="flex justify-end gap-3 font-mono text-sm text-slate-700">
-      <span> {React.string(layout.name)} </span>
+      <span> {React.string(layout.name ++ " · " ++ inputName(input)->String.toLowerCase)} </span>
       <span className="text-slate-600"> {React.string("⌘K for commands")} </span>
     </div>
     <button
@@ -2059,7 +2143,7 @@ let default = (props: props) => {
         }),
       )}
     </button>
-    <Keyboard t={#Ansi(ansi)} setState nextText />
+    <Keyboard t={#Ansi(ansi)} input setState nextText />
     <Palette root=commands />
   </div>
 }
