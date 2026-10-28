@@ -1524,10 +1524,10 @@ module Keyboard = {
   // already on the board's layout, so the character it produced is used as is.
   type input = Translate | Passthru
 
-  // Keys that drive the page rather than type, however keys are read.
+  // Keys that drive the page rather than type, however keys are read. Escape
+  // is left to the command palette.
   let isControl = code =>
     switch code {
-    | "Escape"
     | "F1"
     | "F2"
     | "F3"
@@ -1563,7 +1563,7 @@ module Keyboard = {
       switch t {
       | #Ansi(ansi: Ansi.t) =>
         switch code {
-        | "Escape"
+        | "Escape" => None // opens the command palette
         | "F1"
         | "F2"
         | "F3"
@@ -1696,7 +1696,7 @@ module Keyboard = {
     let target = K.target(ev)
     let body = document->body
     if K.metaKey(ev) || K.ctrlKey(ev) || K.altKey(ev) {
-      () // a shortcut, such as the command palette's, not typing
+      () // a shortcut, not typing
     } else if Obj.magic(target) === body {
       ev->Webapi.Dom.KeyboardEvent.preventDefault
       ev->handleKC(~t, ~input, ~setState, ~nextText)
@@ -2177,7 +2177,7 @@ let default = (props: props) => {
           [layout.name, inputName(input)->String.toLowerCase, profile.name]->Array.joinWith(" · "),
         )}
       </span>
-      <span className="text-slate-600"> {React.string("⌘K for commands")} </span>
+      <span className="text-slate-600"> {React.string("esc for commands")} </span>
     </div>
     <button
       className="bg-slate-800 p-6 rounded-xl shadow-2xl text-3xl font-mono text-white"
