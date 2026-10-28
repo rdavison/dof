@@ -1,5 +1,5 @@
 // A review queue for words that contain a same-finger bigram under the
-// graphite layout, so alternate fingerings can be recorded by hand.
+// amaranth layout, so alternate fingerings can be recorded by hand.
 //
 // Alt fingerings are stored against physical keys -- KeyboardEvent codes, i.e.
 // the legends of an Apple Magic Keyboard US ANSI board -- and never against the
@@ -80,9 +80,9 @@ let fingerName = c =>
 
 // The legend printed on the physical key, as a US ANSI Magic Keyboard has it.
 // Which character sits on which physical key, read off the same record that
-// draws the board -- Ansi.graphite2Keycode is an older layout that no longer
-// agrees with it.
-let layout = Keeb.Ansi.graphite
+// draws the board -- Ansi.graphite2Keycode is Graphite proper, a different
+// layout.
+let layout = Keeb.Ansi.amaranth
 
 let charKey = {
   let d = Dict.make()
@@ -132,7 +132,7 @@ let wordKeys = word =>
 
 // Key pairs that are never worth re-fingering. Each is a one-row reach on a
 // single finger, short enough that nobody reaches around it. Named by physical
-// key, like everything else recorded here; the letters are what the graphite
+// key, like everything else recorded here; the letters are what the amaranth
 // layout puts on them today.
 let ignored = [
   ("KeyI", "KeyK"), // l·t -- right middle, top to home
@@ -457,7 +457,7 @@ let default = (props: props) => {
         status,
         fingers,
         words,
-        layout: "graphite",
+        layout: "amaranth",
         note: "",
       }
       setEntries(prev => prev->Array.filter(x => sigOf(x.keys) != sig)->Array.concat([e]))
@@ -647,7 +647,7 @@ let default = (props: props) => {
       </div>
     }}
     <div className="flex justify-center">
-      <Grid t={#Ansi(Keeb.Ansi.graphite)} />
+      <Grid t={#Ansi(Keeb.Ansi.amaranth)} />
     </div>
     <div className="flex flex-row gap-3 items-center">
       <button
