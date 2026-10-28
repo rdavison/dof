@@ -1576,6 +1576,63 @@ module Trace = {
   }
 }
 
+// The keys a finger covers by default in the central block, the 33 letter
+// and punctuation keys between Tab and Return, by physical key. Computed once
+// per finger.
+let fingerKeys = {
+  let zones = Dict.make()
+  finger =>
+    switch zones->Dict.get(finger) {
+    | Some(keys) => keys
+    | None =>
+      let keys =
+        Ansi.codes->Array.filter(code =>
+          Trace.isAlpha(code) && Fingering.code(kcHF(code)) == finger
+        )
+      zones->Dict.set(finger, keys)
+      keys
+    }
+}
+
+// Each finger's colour, the same on both hands: index amber, middle emerald,
+// ring sky, pinky violet. `finger` is a two-letter code such as "ri".
+let fingerColor = finger =>
+  switch finger->Js.String2.charAt(1) {
+  | "i" => "251 191 36"
+  | "m" => "52 211 153"
+  | "r" => "56 189 248"
+  | "p" => "167 139 250"
+  | _ => "241 245 249"
+  }
+
+// Whether keypresses light up the pressing finger's keys; set from the
+// command palette.
+let showFingerZones = ref(true)
+
+// A soft wash of the finger's colour over every key it covers, fading out, so
+// the finger that pressed a key shows as well as the key itself. An inset
+// shadow sits over the key's background, which `sim` animates on the pressed
+// key, so the two don't fight.
+let flashFinger = finger =>
+  if showFingerZones.contents {
+    let tint = alpha => `rgb(${fingerColor(finger)} / ${alpha})`
+    let timing = {
+      "duration": 600,
+      "iterations": 1,
+      "easing": "ease-out",
+    }
+    fingerKeys(finger)->Array.forEach(code =>
+      switch document->Webapi.Dom.Document.getElementById(code) {
+      | Some(key) =>
+        let _ = key->Webapi.Dom.Element.animate(
+          {"boxShadow": [`inset 0 0 0 60px ${tint("0.35")}`, `inset 0 0 0 60px ${tint("0")}`]},
+          timing,
+        )
+      | None => ()
+      }
+    )
+  }
+
 let cmpH = (a, b) => {
   switch (a, b) {
   | (#l, #r) => -1
@@ -1872,8 +1929,10 @@ module Keyboard = {
           } else {
             color
           }
+          let finger = Fingering.at(text, offset, kc)
           sim(kc, color)
-          Trace.press(kc, color, ~finger=Fingering.at(text, offset, kc))
+          flashFinger(finger)
+          Trace.press(kc, color, ~finger)
           (i + 1, text, color, #white)
         } else {
           (i + 1, text, color, #red)
@@ -2248,6 +2307,7 @@ let default = (props: props) => {
   let (input, setInput) = React.useState(() => Keyboard.Translate)
 
   let (profileId, setProfileId) = React.useState(() => "stronglytyped")
+  let (fingerZones, setFingerZones) = React.useState(() => true)
   let profile =
     Fingering.profiles
     ->Array.find(p => p.id == profileId)
@@ -2343,6 +2403,10 @@ let default = (props: props) => {
     }
     switch remembered("input") {
     | Some("Passthru") => setInput(_ => Passthru)
+    | _ => ()
+    }
+    switch remembered("fingerZones") {
+    | Some("off") => setFingerZones(_ => false)
     | _ => ()
     }
     switch remembered("fingermap") {
@@ -2504,6 +2568,12 @@ let default = (props: props) => {
     None
   }, [input])
 
+  React.useEffect1(() => {
+    showFingerZones := fingerZones
+    remember("fingerZones", fingerZones ? "on" : "off")
+    None
+  }, [fingerZones])
+
   // Trails and bumps ask the profile which finger presses each key.
   React.useEffect1(() => {
     Fingering.setProfile(profileId)
@@ -2595,6 +2665,15 @@ let default = (props: props) => {
             checked: p.id == profileId,
             action: Run(() => setProfileId(_ => p.id)),
           }),
+        }),
+      },
+      {
+        label: "Finger highlights",
+        hint: fingerZones ? "on" : "off",
+        checked: false,
+        action: Run(() => {
+          setFingerZones(_ => !fingerZones)
+          setToast(_ => Some(`Finger highlights ${fingerZones ? "off" : "on"}`))
         }),
       },
     ]),
