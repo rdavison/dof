@@ -1,8 +1,16 @@
 // A command palette, opened with Escape: a filterable list of commands, where
 // a command either runs or opens a further list to choose from. Up and down
-// move, Enter chooses, Escape goes back a list and then closes.
+// move (Page Up and Page Down by a screenful, Home and End to either end),
+// Enter chooses, Escape goes back a list and then closes.
 
 @val @scope("document") external body: Dom.element = "body"
+@get external children: Dom.element => Js.Array2.array_like<Dom.element> = "children"
+@get external offsetTop: Dom.element => int = "offsetTop"
+@get external offsetHeight: Dom.element => int = "offsetHeight"
+@get external clientHeight: Dom.element => int = "clientHeight"
+@get external scrollTop: Dom.element => int = "scrollTop"
+@get external scrollHeight: Dom.element => int = "scrollHeight"
+@set external setScrollTop: (Dom.element, int) => unit = "scrollTop"
 
 type rec item = {
   label: string,
@@ -39,6 +47,40 @@ let make = (~root: page) => {
   let items = page.items->Array.filter(i => matches(i, query))
 
   let close = () => setOpen(_ => false)
+
+  // The list scrolls once it outgrows its height, and has to follow the
+  // selection as the keys move it.
+  let list = React.useRef(Js.Nullable.null)
+  let row = i =>
+    list.current
+    ->Js.Nullable.toOption
+    ->Option.flatMap(ul => Js.Array2.from(children(ul))->Array.get(i)->Option.map(li => (ul, li)))
+
+  React.useEffect3(() => {
+    switch row(selected) {
+    // the ends go all the way, past the list's padding
+    | Some((ul, _)) if selected == 0 => ul->setScrollTop(0)
+    | Some((ul, _)) if selected == items->Array.length - 1 => ul->setScrollTop(scrollHeight(ul))
+    | Some((ul, li)) =>
+      let top = offsetTop(li)
+      let bottom = top + offsetHeight(li)
+      if top < scrollTop(ul) {
+        ul->setScrollTop(top)
+      } else if bottom > scrollTop(ul) + clientHeight(ul) {
+        ul->setScrollTop(bottom - clientHeight(ul))
+      }
+    | None => ()
+    }
+    None
+  }, (selected, query, stack))
+
+  // how many rows fit in the list, for Page Up and Page Down
+  let pageSize = () =>
+    switch row(0) {
+    | Some((ul, li)) if offsetHeight(li) > 0 =>
+      Js.Math.max_int(1, clientHeight(ul) / offsetHeight(li) - 1)
+    | _ => 1
+    }
 
   React.useEffect0(() => {
     module K = Webapi.Dom.KeyboardEvent
@@ -79,13 +121,21 @@ let make = (~root: page) => {
 
   let onKeyDown = e => {
     let len = items->Array.length
+    let move = f => {
+      ReactEvent.Keyboard.preventDefault(e)
+      setSelected(i => Js.Math.max_int(0, Js.Math.min_int(f(i), len - 1)))
+    }
     switch ReactEvent.Keyboard.key(e) {
-    | "ArrowDown" =>
-      ReactEvent.Keyboard.preventDefault(e)
-      setSelected(i => Js.Math.min_int(i + 1, len - 1))
-    | "ArrowUp" =>
-      ReactEvent.Keyboard.preventDefault(e)
-      setSelected(i => Js.Math.max_int(i - 1, 0))
+    | "ArrowDown" => move(i => i + 1)
+    | "ArrowUp" => move(i => i - 1)
+    | "PageDown" =>
+      let n = pageSize()
+      move(i => i + n)
+    | "PageUp" =>
+      let n = pageSize()
+      move(i => i - n)
+    | "Home" => move(_ => 0)
+    | "End" => move(_ => len - 1)
     | "Enter" =>
       ReactEvent.Keyboard.preventDefault(e)
       items->Array.get(selected)->Option.forEach(choose)
@@ -129,7 +179,7 @@ let make = (~root: page) => {
             onKeyDown
           />
         </div>
-        <ul className="max-h-80 overflow-y-auto py-2">
+        <ul ref={ReactDOM.Ref.domRef(list)} className="relative max-h-80 overflow-y-auto py-2">
           {if items->Array.length == 0 {
             <li className="px-4 py-2 text-slate-500"> {React.string("No matches")} </li>
           } else {
@@ -140,7 +190,12 @@ let make = (~root: page) => {
                   className={"flex cursor-pointer justify-between px-4 py-2 " ++ (
                     i == selected ? "bg-slate-700 text-white" : "text-slate-300"
                   )}
-                  onMouseEnter={_ => setSelected(_ => i)}
+                  // Only a moving pointer selects: the list scrolling under a
+                  // resting one mustn't take the selection from the keys.
+                  onMouseMove={_ =>
+                    if i != selected {
+                      setSelected(_ => i)
+                    }}
                   onMouseDown={e => {
                     // keep focus in the input
                     ReactEvent.Mouse.preventDefault(e)
