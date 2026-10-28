@@ -1576,6 +1576,58 @@ module Trace = {
   }
 }
 
+// The keys a finger covers by default in the central block, the 33 letter
+// and punctuation keys between Tab and Return, by physical key. Computed once
+// per finger.
+let fingerKeys = {
+  let zones = Dict.make()
+  finger =>
+    switch zones->Dict.get(finger) {
+    | Some(keys) => keys
+    | None =>
+      let keys =
+        Ansi.codes->Array.filter(code =>
+          Trace.isAlpha(code) && Fingering.code(kcHF(code)) == finger
+        )
+      zones->Dict.set(finger, keys)
+      keys
+    }
+}
+
+// Each finger's colour, the same on both hands: index amber, middle emerald,
+// ring sky, pinky violet. `finger` is a two-letter code such as "ri".
+let fingerColor = finger =>
+  switch finger->Js.String2.charAt(1) {
+  | "i" => "251 191 36"
+  | "m" => "52 211 153"
+  | "r" => "56 189 248"
+  | "p" => "167 139 250"
+  | _ => "241 245 249"
+  }
+
+// A soft wash of the finger's colour over every key it covers, fading out, so
+// the finger that pressed a key shows as well as the key itself. An inset
+// shadow sits over the key's background, which `sim` animates on the pressed
+// key, so the two don't fight.
+let flashFinger = finger => {
+  let tint = alpha => `rgb(${fingerColor(finger)} / ${alpha})`
+  let timing = {
+    "duration": 600,
+    "iterations": 1,
+    "easing": "ease-out",
+  }
+  fingerKeys(finger)->Array.forEach(code =>
+    switch document->Webapi.Dom.Document.getElementById(code) {
+    | Some(key) =>
+      let _ = key->Webapi.Dom.Element.animate(
+        {"boxShadow": [`inset 0 0 0 60px ${tint("0.35")}`, `inset 0 0 0 60px ${tint("0")}`]},
+        timing,
+      )
+    | None => ()
+    }
+  )
+}
+
 let cmpH = (a, b) => {
   switch (a, b) {
   | (#l, #r) => -1
@@ -1872,8 +1924,10 @@ module Keyboard = {
           } else {
             color
           }
+          let finger = Fingering.at(text, offset, kc)
           sim(kc, color)
-          Trace.press(kc, color, ~finger=Fingering.at(text, offset, kc))
+          flashFinger(finger)
+          Trace.press(kc, color, ~finger)
           (i + 1, text, color, #white)
         } else {
           (i + 1, text, color, #red)
