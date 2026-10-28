@@ -1609,28 +1609,71 @@ let fingerColor = finger =>
 // command palette.
 let showFingerZones = ref(true)
 
-// A soft wash of the finger's colour over every key it covers, fading out, so
-// the finger that pressed a key shows as well as the key itself. An inset
-// shadow sits over the key's background, which `sim` animates on the pressed
-// key, so the two don't fight.
-let flashFinger = finger =>
+// How the finger's light falls off: full at the pressed key, half one key
+// away, a fifth two keys away, as peak / (1 + (d / zoneReach)^2), which is
+// light's inverse square kept finite at the source.
+let zonePeak = 0.5
+let zoneReach = 64.
+let zoneMs = 600
+
+// Whether the light falls off with distance from the pressed key, or lights
+// every key the finger covers evenly at `zoneEven`; set from the command
+// palette.
+let zoneFalloff = ref(true)
+let zoneEven = 0.35
+
+// A pool of the finger's colour cast from the pressed key `from` over every
+// key the finger covers, fading out, so the finger that pressed a key shows as
+// well as the key itself. Each key gets a pane in the #Zones layer whose
+// radial gradient is centred on the pressed key, so the panes together read
+// as one light. They screen-blend, lighting the dark key without washing out
+// its label. With falloff off, every pane gets the same flat tint.
+let flashFinger = (finger, ~from) =>
   if showFingerZones.contents {
-    let tint = alpha => `rgb(${fingerColor(finger)} / ${alpha})`
-    let timing = {
-      "duration": 600,
-      "iterations": 1,
-      "easing": "ease-out",
+    module Dom = Webapi.Dom
+    switch (Trace.byId("Zones"), Trace.byId(from)) {
+    | (Some(layer), Some(source)) =>
+      let f = Float.toString
+      let (sx, sy) = Trace.center(source, layer)
+      let tint = alpha => `rgb(${fingerColor(finger)} / ${f(alpha)})`
+      let stops =
+        Array.fromInitializer(~length=11, i => {
+          let d = Int.toFloat(i) *. zoneReach /. 2.
+          let alpha = zonePeak /. (1. +. (d /. zoneReach) ** 2.)
+          `${tint(alpha)} ${f(d)}px`
+        })
+        ->Array.concat([`transparent ${f(6. *. zoneReach)}px`])
+        ->Array.joinWith(", ")
+      fingerKeys(finger)->Array.forEach(code =>
+        switch Trace.byId(code) {
+        | Some(key) =>
+          let r = key->Dom.Element.getBoundingClientRect
+          let (x, y) = Trace.center(key, layer)
+          let w = Dom.DomRect.width(r)
+          let h = Dom.DomRect.height(r)
+          let left = x -. w /. 2.
+          let top = y -. h /. 2.
+          let background = zoneFalloff.contents
+            ? `radial-gradient(circle at ${f(sx -. left)}px ${f(sy -. top)}px, ${stops})`
+            : tint(zoneEven)
+          let pane = document->Dom.Document.createElement("div")
+          pane->Dom.Element.setAttribute(
+            "style",
+            `position: absolute; left: ${f(left)}px; top: ${f(top)}px; width: ${f(w)}px; height: ${f(
+                h,
+              )}px; border-radius: 8px; mix-blend-mode: screen; background: ${background};`,
+          )
+          layer->Dom.Element.appendChild(~child=pane)
+          let _ = pane->Dom.Element.animate(
+            {"opacity": [1, 0]},
+            {"duration": zoneMs, "iterations": 1, "easing": "ease-out", "fill": "forwards"},
+          )
+          let _ = setTimeout(() => pane->Dom.Element.remove, zoneMs)
+        | None => ()
+        }
+      )
+    | _ => ()
     }
-    fingerKeys(finger)->Array.forEach(code =>
-      switch document->Webapi.Dom.Document.getElementById(code) {
-      | Some(key) =>
-        let _ = key->Webapi.Dom.Element.animate(
-          {"boxShadow": [`inset 0 0 0 60px ${tint("0.35")}`, `inset 0 0 0 60px ${tint("0")}`]},
-          timing,
-        )
-      | None => ()
-      }
-    )
   }
 
 let cmpH = (a, b) => {
@@ -1931,7 +1974,7 @@ module Keyboard = {
           }
           let finger = Fingering.at(text, offset, kc)
           sim(kc, color)
-          flashFinger(finger)
+          flashFinger(finger, ~from=kc)
           Trace.press(kc, color, ~finger)
           (i + 1, text, color, #white)
         } else {
@@ -2196,6 +2239,7 @@ module Keyboard = {
               <Key.Nav />
             </div>
           </div>
+          <div id="Zones" className="absolute inset-0 pointer-events-none" />
           <svg id="Traces" className="absolute inset-0 w-full h-full pointer-events-none" />
           <div id="Bumps" className="absolute inset-0 pointer-events-none" />
           children
@@ -2308,6 +2352,7 @@ let default = (props: props) => {
 
   let (profileId, setProfileId) = React.useState(() => "stronglytyped")
   let (fingerZones, setFingerZones) = React.useState(() => true)
+  let (falloff, setFalloff) = React.useState(() => true)
   let profile =
     Fingering.profiles
     ->Array.find(p => p.id == profileId)
@@ -2407,6 +2452,10 @@ let default = (props: props) => {
     }
     switch remembered("fingerZones") {
     | Some("off") => setFingerZones(_ => false)
+    | _ => ()
+    }
+    switch remembered("zoneFalloff") {
+    | Some("off") => setFalloff(_ => false)
     | _ => ()
     }
     switch remembered("fingermap") {
@@ -2574,6 +2623,12 @@ let default = (props: props) => {
     None
   }, [fingerZones])
 
+  React.useEffect1(() => {
+    zoneFalloff := falloff
+    remember("zoneFalloff", falloff ? "on" : "off")
+    None
+  }, [falloff])
+
   // Trails and bumps ask the profile which finger presses each key.
   React.useEffect1(() => {
     Fingering.setProfile(profileId)
@@ -2674,6 +2729,17 @@ let default = (props: props) => {
         action: Run(() => {
           setFingerZones(_ => !fingerZones)
           setToast(_ => Some(`Finger highlights ${fingerZones ? "off" : "on"}`))
+        }),
+      },
+      {
+        label: "Finger highlight falloff",
+        hint: falloff ? "fades with distance" : "even",
+        checked: false,
+        action: Run(() => {
+          setFalloff(_ => !falloff)
+          setToast(_ =>
+            Some(`Finger highlights ${falloff ? "even across the finger" : "fade with distance"}`)
+          )
         }),
       },
     ]),
