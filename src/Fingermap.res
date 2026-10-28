@@ -92,6 +92,26 @@ let withoutWord = (map, keys) => {
   {...map, words}
 }
 
+// `map` with a rule for `rule.pair`, replacing any rule already there: there
+// is one rule per pair of keys.
+let withRule = (map, rule) => {
+  ...map,
+  rules: map.rules->Array.filter(r => r.pair != rule.pair)->Array.concat([rule]),
+}
+
+let withoutRule = (map, pair) => {...map, rules: map.rules->Array.filter(r => r.pair != pair)}
+
+// Whether `keys` has `pair` back to back somewhere.
+let hasPair = (keys, (a, b)) => {
+  let found = ref(false)
+  for i in 0 to keys->Array.length - 2 {
+    if keys->Array.getUnsafe(i) == a && keys->Array.getUnsafe(i + 1) == b {
+      found := true
+    }
+  }
+  found.contents
+}
+
 // The built-ins. stronglytyped carries the alternates shipped in
 // data/alt-fingerings.json; standard has none.
 let standard = {
