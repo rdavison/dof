@@ -1,7 +1,8 @@
-// A command palette on Cmd+K (Ctrl+K elsewhere): a filterable list of
-// commands, where a command either runs or opens a further list to choose
-// from. Up and down move, Enter chooses, Escape goes back a list and then
-// closes.
+// A command palette, opened with Escape: a filterable list of commands, where
+// a command either runs or opens a further list to choose from. Up and down
+// move, Enter chooses, Escape goes back a list and then closes.
+
+@val @scope("document") external body: Dom.element = "body"
 
 type rec item = {
   label: string,
@@ -41,13 +42,15 @@ let make = (~root: page) => {
 
   React.useEffect0(() => {
     module K = Webapi.Dom.KeyboardEvent
+    // Only an Escape pressed on the page opens it. One pressed in the palette's
+    // own input is handled there, and must not reopen the palette it closed.
     let onKey = ev =>
-      if (K.metaKey(ev) || K.ctrlKey(ev)) && K.code(ev) == "KeyK" {
+      if K.code(ev) == "Escape" && Obj.magic(K.target(ev)) === body {
         K.preventDefault(ev)
         setStack(_ => list{})
         setQuery(_ => "")
         setSelected(_ => 0)
-        setOpen(o => !o)
+        setOpen(_ => true)
       }
     Webapi.Dom.window->Webapi.Dom.Window.addKeyDownEventListener(onKey)
     Some(() => Webapi.Dom.window->Webapi.Dom.Window.removeKeyDownEventListener(onKey))
