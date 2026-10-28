@@ -1032,7 +1032,10 @@ type animation = Dom.animation
 // the two keys, for a same-finger bigram (two different keys pressed back to
 // back by one finger) or skipgram (the same, one press apart, even across a
 // space). A bigram's pill glows and its second key flashes; a skipgram's pill
-// is a shadow sunk into the board.
+// is a shadow sunk into the board. How hard a bump glows (or sinks) follows
+// how fast the finger has to move, if every key comes at the same tempo: the
+// distance between the keys over one beat for a bigram, two for a skipgram,
+// times `sameFingerWeight`.
 module Trace = {
   module Dom = Webapi.Dom
 
@@ -1042,6 +1045,13 @@ module Trace = {
   let fadeMs = 500
   let bumpMs = 450
   let traceMs = 150
+
+  // a 60px key and its margins: the unit for same-finger distances
+  let keyPitch = 64.
+
+  // Scales every same-finger bump's intensity; set from the command palette.
+  // 0 turns bumps off.
+  let sameFingerWeight = ref(2.)
 
   // The trail is a glowing comet: brightest and widest at the orb, thinning to
   // nothing some way back along the path. The tail reaches `tailReach` times the
@@ -1445,40 +1455,48 @@ module Trace = {
   type look = Glow | Flash | Shadow
 
   // A pane of frosted glass tinted with the word color, absolutely positioned
-  // at `geometry` (CSS declarations) inside the #Bumps layer.
-  let glass = (~look, layer, geometry, color) => {
+  // at `geometry` (CSS declarations) inside the #Bumps layer. `intensity` 1 is
+  // the standard look; it scales the light (or, for a shadow, the darkness)
+  // the pane gives off, not its shape: the outer halo's size, how much colour
+  // is in it, and how much the glass brightens or darkens what's behind it.
+  let glass = (~look, ~intensity as k, layer, geometry, color) => {
     let col = c(color)
+    let f = x => Float.toString(Js.Math.round(x *. 1000.) /. 1000.)
+    let px = n => `${f(n *. k)}px`
+    let pct = n => `${f(Js.Math.min_float(100., n *. k))}%`
+    let alpha = a => f(Js.Math.min_float(1., a *. k))
+    let brighten = b => f(Js.Math.max_float(0.1, 1. +. (b -. 1.) *. k))
     let skin = switch look {
     | Glow =>
       `background: radial-gradient(circle at 30% 20%, rgba(255,255,255,0.5), transparent 60%),
-        color-mix(in srgb, ${col} 35%, transparent);
-      backdrop-filter: blur(6px) saturate(180%) brightness(1.3);
-      -webkit-backdrop-filter: blur(6px) saturate(180%) brightness(1.3);
+        color-mix(in srgb, ${col} ${pct(35.)}, transparent);
+      backdrop-filter: blur(6px) saturate(180%) brightness(${brighten(1.3)});
+      -webkit-backdrop-filter: blur(6px) saturate(180%) brightness(${brighten(1.3)});
       border: 1.5px solid rgba(255,255,255,0.8);
       box-shadow: inset 0 1px 2px rgba(255,255,255,0.9),
         inset 0 0 12px color-mix(in srgb, ${col} 60%, white),
-        0 0 14px 3px color-mix(in srgb, ${col} 70%, white),
-        0 0 36px 10px color-mix(in srgb, ${col} 45%, transparent);`
+        0 0 ${px(14.)} ${px(3.)} color-mix(in srgb, ${col} ${pct(70.)}, white),
+        0 0 ${px(36.)} ${px(10.)} color-mix(in srgb, ${col} ${pct(45.)}, transparent);`
     | Flash =>
       `background: radial-gradient(circle at 30% 20%, rgba(255,255,255,0.5), transparent 60%),
-        color-mix(in srgb, ${col} 55%, transparent);
-      backdrop-filter: blur(6px) saturate(180%) brightness(1.7);
-      -webkit-backdrop-filter: blur(6px) saturate(180%) brightness(1.7);
+        color-mix(in srgb, ${col} ${pct(55.)}, transparent);
+      backdrop-filter: blur(6px) saturate(180%) brightness(${brighten(1.7)});
+      -webkit-backdrop-filter: blur(6px) saturate(180%) brightness(${brighten(1.7)});
       border: 1.5px solid rgba(255,255,255,1);
       box-shadow: inset 0 1px 2px rgba(255,255,255,0.9),
         inset 0 0 18px color-mix(in srgb, ${col} 40%, white),
-        0 0 18px 6px color-mix(in srgb, ${col} 50%, white),
-        0 0 48px 18px color-mix(in srgb, ${col} 80%, transparent),
-        0 0 90px 30px color-mix(in srgb, ${col} 40%, transparent);`
+        0 0 ${px(18.)} ${px(6.)} color-mix(in srgb, ${col} ${pct(50.)}, white),
+        0 0 ${px(48.)} ${px(18.)} color-mix(in srgb, ${col} ${pct(80.)}, transparent),
+        0 0 ${px(90.)} ${px(30.)} color-mix(in srgb, ${col} ${pct(40.)}, transparent);`
     | Shadow =>
       `background: color-mix(in srgb, ${col} 20%, rgba(0,0,0,0.55));
-      backdrop-filter: blur(4px) saturate(60%) brightness(0.45);
-      -webkit-backdrop-filter: blur(4px) saturate(60%) brightness(0.45);
+      backdrop-filter: blur(4px) saturate(60%) brightness(${brighten(0.45)});
+      -webkit-backdrop-filter: blur(4px) saturate(60%) brightness(${brighten(0.45)});
       border: 1px solid rgba(0,0,0,0.6);
       box-shadow: inset 0 3px 8px rgba(0,0,0,0.85),
         inset 0 -1px 1px color-mix(in srgb, ${col} 40%, transparent),
-        0 8px 22px 6px rgba(0,0,0,0.7),
-        0 2px 6px rgba(0,0,0,0.8);`
+        0 8px ${px(22.)} ${px(6.)} rgba(0,0,0,${alpha(0.7)}),
+        0 2px ${px(6.)} rgba(0,0,0,${alpha(0.8)});`
     }
     let pane = document->Dom.Document.createElement("div")
     pane->Dom.Element.setAttribute("style", `position: absolute; ${geometry} ${skin}`)
@@ -1494,7 +1512,7 @@ module Trace = {
     "fill": "forwards",
   }
 
-  let bumpKey = (keycode, color) => {
+  let bumpKey = (~intensity, keycode, color) => {
     switch (byId("Bumps"), byId(keycode)) {
     | (Some(layer), Some(key)) =>
       let r = key->Dom.Element.getBoundingClientRect
@@ -1504,6 +1522,7 @@ module Trace = {
       let f = Float.toString
       let pane = glass(
         ~look=Flash,
+        ~intensity,
         layer,
         `left: ${f(x -. w /. 2.)}px; top: ${f(y -. h /. 2.)}px; width: ${f(w)}px; height: ${f(
             h,
@@ -1518,7 +1537,7 @@ module Trace = {
     }
   }
 
-  let bumpLine = (~look, src, dst, color) => {
+  let bumpLine = (~look, ~intensity, src, dst, color) => {
     switch (byId("Bumps"), byId(src), byId(dst)) {
     | (Some(layer), Some(a), Some(b)) =>
       let (x1, y1) = center(a, layer)
@@ -1531,6 +1550,7 @@ module Trace = {
       // anchored at the first key's center, rotated toward the second
       let pane = glass(
         ~look,
+        ~intensity,
         layer,
         `left: ${f(x1)}px; top: ${f(y1 -. thick /. 2.)}px; width: ${f(len)}px; height: ${f(
             thick,
@@ -1556,6 +1576,21 @@ module Trace = {
     history := []
   }
 
+  // How far apart two keys are on the board, in key widths.
+  let distance = (src, dst) =>
+    switch (byId(src), byId(dst)) {
+    | (Some(a), Some(b)) =>
+      let (x, y) = center(a, b)
+      let (bx, by) = center(b, b)
+      Js.Math.sqrt((x -. bx) *. (x -. bx) +. (y -. by) *. (y -. by)) /. keyPitch
+    | _ => 1.
+    }
+
+  // How hard a bump between `src` and `dst` shows: the finger's speed, the
+  // distance it covers in `beats` keypresses, times the weight, up to 4.
+  let intensity = (src, dst, ~beats) =>
+    Js.Math.min_float(4., sameFingerWeight.contents *. distance(src, dst) /. beats)
+
   // `finger` is the two-letter code of the finger that really presses this key,
   // which is the default for the key unless the word has a recorded alternate.
   let press = (keycode, color: color, ~finger) => {
@@ -1563,12 +1598,19 @@ module Trace = {
     if isAlpha(keycode) {
       switch history.contents->Array.get(0) {
       | Some((prev, _) as p) if sameFinger(p, key) =>
-        bumpLine(~look=Glow, prev, keycode, color)
-        bumpKey(keycode, color)
+        let intensity = intensity(prev, keycode, ~beats=1.)
+        if intensity > 0. {
+          bumpLine(~look=Glow, ~intensity, prev, keycode, color)
+          bumpKey(~intensity, keycode, color)
+        }
       | _ => ()
       }
       switch history.contents->Array.get(1) {
-      | Some((src, _) as s) if sameFinger(s, key) => bumpLine(~look=Shadow, src, keycode, color)
+      | Some((src, _) as s) if sameFinger(s, key) =>
+        let intensity = intensity(src, keycode, ~beats=2.)
+        if intensity > 0. {
+          bumpLine(~look=Shadow, ~intensity, src, keycode, color)
+        }
       | _ => ()
       }
     }
@@ -2353,6 +2395,13 @@ let default = (props: props) => {
   let (profileId, setProfileId) = React.useState(() => "stronglytyped")
   let (fingerZones, setFingerZones) = React.useState(() => true)
   let (falloff, setFalloff) = React.useState(() => true)
+  // the weight on same-finger bumps, and the slider that sets it
+  let (sameFingerWeight, setSameFingerWeight) = React.useState(() => {
+    Palette.value: 2.,
+    min: 0.,
+    max: 3.,
+    step: 0.1,
+  })
   let profile =
     Fingering.profiles
     ->Array.find(p => p.id == profileId)
@@ -2456,6 +2505,26 @@ let default = (props: props) => {
     }
     switch remembered("zoneFalloff") {
     | Some("off") => setFalloff(_ => false)
+    | _ => ()
+    }
+    switch remembered("sameFingerWeight")
+    ->Option.flatMap(text =>
+      try {
+        Js.Json.parseExn(text)->Js.Json.decodeObject
+      } catch {
+      | _ => None
+      }
+    )
+    ->Option.map(o => ["value", "min", "max", "step"]->Array.map(k =>
+      o->Js.Dict.get(k)->Option.flatMap(Js.Json.decodeNumber)
+    )) {
+    | Some([Some(value), Some(min), Some(max), Some(step)]) if min < max && step > 0. =>
+      setSameFingerWeight(_ => {
+        Palette.value: Js.Math.max_float(min, Js.Math.min_float(max, value)),
+        min,
+        max,
+        step,
+      })
     | _ => ()
     }
     switch remembered("fingermap") {
@@ -2629,6 +2698,15 @@ let default = (props: props) => {
     None
   }, [falloff])
 
+  React.useEffect1(() => {
+    Trace.sameFingerWeight := sameFingerWeight.value
+    remember(
+      "sameFingerWeight",
+      Js.Json.stringifyAny(sameFingerWeight)->Option.getWithDefault(""),
+    )
+    None
+  }, [sameFingerWeight])
+
   // Trails and bumps ask the profile which finger presses each key.
   React.useEffect1(() => {
     Fingering.setProfile(profileId)
@@ -2740,6 +2818,16 @@ let default = (props: props) => {
           setToast(_ =>
             Some(`Finger highlights ${falloff ? "even across the finger" : "fade with distance"}`)
           )
+        }),
+      },
+      {
+        label: "Same-finger glow weight",
+        hint: Palette.show(sameFingerWeight.value),
+        checked: false,
+        action: Slider({
+          name: "Same-finger glow weight",
+          settings: sameFingerWeight,
+          onChange: settings => setSameFingerWeight(_ => settings),
         }),
       },
     ]),
