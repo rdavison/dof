@@ -763,8 +763,9 @@ module Trace = {
 
   type color = [#red | #yellow1 | #green | #blue | #indigo | #white]
 
-  // the most recent keypresses of any kind, newest first
-  let history: ref<array<string>> = ref([])
+  // the most recent keypresses of any kind, newest first, with the finger
+  // that pressed each
+  let history: ref<array<(string, string)>> = ref([])
 
   let center = (element, origin) => {
     let r = element->Dom.Element.getBoundingClientRect
@@ -1203,26 +1204,31 @@ module Trace = {
     }
   }
 
-  let sameFinger = (a, b) => a != b && isAlpha(a) && kcHF(a) == kcHF(b)
+  // Two different keys pressed by one finger. Fingers are two-letter codes from
+  // `Fingering.at`, so a word's recorded alternate fingering counts.
+  let sameFinger = ((a, fingerA), (b, fingerB)) => a != b && isAlpha(a) && fingerA == fingerB
 
   let reset = () => {
     history := []
   }
 
-  let press = (keycode, color: color) => {
+  // `finger` is the two-letter code of the finger that really presses this key,
+  // which is the default for the key unless the word has a recorded alternate.
+  let press = (keycode, color: color, ~finger) => {
+    let key = (keycode, finger)
     if isAlpha(keycode) {
       switch history.contents->Array.get(0) {
-      | Some(prev) if sameFinger(prev, keycode) =>
+      | Some((prev, _) as p) if sameFinger(p, key) =>
         bumpLine(~look=Glow, prev, keycode, color)
         bumpKey(keycode, color)
       | _ => ()
       }
       switch history.contents->Array.get(1) {
-      | Some(src) if sameFinger(src, keycode) => bumpLine(~look=Shadow, src, keycode, color)
+      | Some((src, _) as s) if sameFinger(s, key) => bumpLine(~look=Shadow, src, keycode, color)
       | _ => ()
       }
     }
-    history := [keycode]->Array.concat(history.contents->Array.slice(~start=0, ~end=1))
+    history := [key]->Array.concat(history.contents->Array.slice(~start=0, ~end=1))
   }
 }
 
@@ -1478,7 +1484,7 @@ module Keyboard = {
             color
           }
           sim(kc, color)
-          Trace.press(kc, color)
+          Trace.press(kc, color, ~finger=Fingering.at(text, offset, kc))
           (i + 1, text, color, #white)
         } else {
           (i + 1, text, color, #red)
