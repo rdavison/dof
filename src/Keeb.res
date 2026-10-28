@@ -502,10 +502,19 @@ let kcHF = keycode => {
 
 // Fading per-hand curves between consecutive keypresses within a word.
 // A word is a run of keypresses sharing the same active color.
+//
+// Same-finger events get a glass "bump" that swells and fades: a pill joining
+// the two keys, for a same-finger bigram (two different keys pressed back to
+// back by one finger) or skipgram (the same, one press apart, even across a
+// space). A bigram's pill glows and its second key flashes; a skipgram's pill
+// is a shadow sunk into the board.
 module Trace = {
   module Dom = Webapi.Dom
 
+  // Trails are off so the same-finger bumps read on their own; flip to compare.
+  let showTrails = false
   let fadeMs = 1000
+  let bumpMs = 450
 
   let isAlpha = keycode =>
     switch keycode {
@@ -523,6 +532,8 @@ module Trace = {
   let wordColor: ref<option<color>> = ref(None)
   let lastLeft = ref(None)
   let lastRight = ref(None)
+  // the last two keypresses of any kind, newest first
+  let recent: ref<array<string>> = ref([])
 
   let center = (element, origin) => {
     let r = element->Dom.Element.getBoundingClientRect
@@ -533,8 +544,9 @@ module Trace = {
     )
   }
 
+  let byId = id => document->Dom.Document.getElementById(id)
+
   let draw = (src, dst, color) => {
-    let byId = id => document->Dom.Document.getElementById(id)
     switch (byId("Traces"), byId(src), byId(dst)) {
     | (Some(svg), Some(a), Some(b)) =>
       let (x1, y1) = center(a, svg)
@@ -562,6 +574,123 @@ module Trace = {
     }
   }
 
+  // How a pane reads: `Glow` lights up, `Flash` lights up harder (the key a
+  // bigram lands on), `Shadow` sinks into the board (a skipgram, the lesser sin).
+  type look = Glow | Flash | Shadow
+
+  // A pane of frosted glass tinted with the word color, absolutely positioned
+  // at `geometry` (CSS declarations) inside the #Bumps layer.
+  let glass = (~look, layer, geometry, color) => {
+    let col = c(color)
+    let skin = switch look {
+    | Glow =>
+      `background: radial-gradient(circle at 30% 20%, rgba(255,255,255,0.5), transparent 60%),
+        color-mix(in srgb, ${col} 35%, transparent);
+      backdrop-filter: blur(6px) saturate(180%) brightness(1.3);
+      -webkit-backdrop-filter: blur(6px) saturate(180%) brightness(1.3);
+      border: 1.5px solid rgba(255,255,255,0.8);
+      box-shadow: inset 0 1px 2px rgba(255,255,255,0.9),
+        inset 0 0 12px color-mix(in srgb, ${col} 60%, white),
+        0 0 14px 3px color-mix(in srgb, ${col} 70%, white),
+        0 0 36px 10px color-mix(in srgb, ${col} 45%, transparent);`
+    | Flash =>
+      `background: radial-gradient(circle at 30% 20%, rgba(255,255,255,0.5), transparent 60%),
+        color-mix(in srgb, ${col} 55%, transparent);
+      backdrop-filter: blur(6px) saturate(180%) brightness(1.7);
+      -webkit-backdrop-filter: blur(6px) saturate(180%) brightness(1.7);
+      border: 1.5px solid rgba(255,255,255,1);
+      box-shadow: inset 0 1px 2px rgba(255,255,255,0.9),
+        inset 0 0 18px color-mix(in srgb, ${col} 40%, white),
+        0 0 18px 6px color-mix(in srgb, ${col} 50%, white),
+        0 0 48px 18px color-mix(in srgb, ${col} 80%, transparent),
+        0 0 90px 30px color-mix(in srgb, ${col} 40%, transparent);`
+    | Shadow =>
+      `background: color-mix(in srgb, ${col} 20%, rgba(0,0,0,0.55));
+      backdrop-filter: blur(4px) saturate(60%) brightness(0.45);
+      -webkit-backdrop-filter: blur(4px) saturate(60%) brightness(0.45);
+      border: 1px solid rgba(0,0,0,0.6);
+      box-shadow: inset 0 3px 8px rgba(0,0,0,0.85),
+        inset 0 -1px 1px color-mix(in srgb, ${col} 40%, transparent),
+        0 8px 22px 6px rgba(0,0,0,0.7),
+        0 2px 6px rgba(0,0,0,0.8);`
+    }
+    let pane = document->Dom.Document.createElement("div")
+    pane->Dom.Element.setAttribute("style", `position: absolute; ${geometry} ${skin}`)
+    layer->Dom.Element.appendChild(~child=pane)
+    let _ = setTimeout(() => pane->Dom.Element.remove, bumpMs)
+    pane
+  }
+
+  let bumpTiming = {
+    "duration": bumpMs,
+    "iterations": 1,
+    "easing": "ease-out",
+    "fill": "forwards",
+  }
+
+  let bumpKey = (keycode, color) => {
+    switch (byId("Bumps"), byId(keycode)) {
+    | (Some(layer), Some(key)) =>
+      let r = key->Dom.Element.getBoundingClientRect
+      let (x, y) = center(key, layer)
+      let w = Dom.DomRect.width(r)
+      let h = Dom.DomRect.height(r)
+      let f = Float.toString
+      let pane = glass(
+        ~look=Flash,
+        layer,
+        `left: ${f(x -. w /. 2.)}px; top: ${f(y -. h /. 2.)}px; width: ${f(w)}px; height: ${f(
+            h,
+          )}px; border-radius: 8px;`,
+        color,
+      )
+      let _ = pane->Dom.Element.animate(
+        {"transform": ["scale(1)", "scale(1.6)"], "opacity": [1., 0.]},
+        bumpTiming,
+      )
+    | _ => ()
+    }
+  }
+
+  let bumpLine = (~look, src, dst, color) => {
+    switch (byId("Bumps"), byId(src), byId(dst)) {
+    | (Some(layer), Some(a), Some(b)) =>
+      let (x1, y1) = center(a, layer)
+      let (x2, y2) = center(b, layer)
+      let len = Js.Math.sqrt((x2 -. x1) *. (x2 -. x1) +. (y2 -. y1) *. (y2 -. y1))
+      let angle = Js.Math.atan2(~y=y2 -. y1, ~x=x2 -. x1, ())
+      let thick = 14.
+      let f = Float.toString
+      let rotate = `rotate(${f(angle)}rad)`
+      // anchored at the first key's center, rotated toward the second
+      let pane = glass(
+        ~look,
+        layer,
+        `left: ${f(x1)}px; top: ${f(y1 -. thick /. 2.)}px; width: ${f(len)}px; height: ${f(
+            thick,
+          )}px; border-radius: 9999px; transform-origin: 0 50%;`,
+        color,
+      )
+      let _ = pane->Dom.Element.animate(
+        {
+          "transform": [`${rotate} scaleY(1)`, `${rotate} scaleY(2.2)`],
+          "opacity": [1., 0.],
+        },
+        bumpTiming,
+      )
+    | _ => ()
+    }
+  }
+
+  let sameFinger = (a, b) => a != b && isAlpha(a) && kcHF(a) == kcHF(b)
+
+  let reset = () => {
+    wordColor := None
+    lastLeft := None
+    lastRight := None
+    recent := []
+  }
+
   let press = (keycode, color: color) => {
     if wordColor.contents != Some(color) {
       wordColor := Some(color)
@@ -569,12 +698,25 @@ module Trace = {
       lastRight := None
     }
     if isAlpha(keycode) {
+      switch recent.contents->Array.get(0) {
+      | Some(prev) if sameFinger(prev, keycode) =>
+        bumpLine(~look=Glow, prev, keycode, color)
+        bumpKey(keycode, color)
+      | _ => ()
+      }
+      switch recent.contents->Array.get(1) {
+      | Some(src) if sameFinger(src, keycode) => bumpLine(~look=Shadow, src, keycode, color)
+      | _ => ()
+      }
+    }
+    recent := [keycode]->Array.concat(recent.contents->Array.slice(~start=0, ~end=1))
+    if isAlpha(keycode) {
       let last = switch kcHF(keycode) {
       | (#l, _) => lastLeft
       | (#r, _) => lastRight
       }
       switch last.contents {
-      | Some(src) if src != keycode => draw(src, keycode, color)
+      | Some(src) if showTrails && src != keycode => draw(src, keycode, color)
       | _ => ()
       }
       last := Some(keycode)
@@ -742,6 +884,7 @@ module Keyboard = {
         | "F11"
         | "F12"
         | "Tab" =>
+          Trace.reset()
           setState(((_offset, _text, color, _highlightColor)) => {
             let offset = -1
             let text = nextText()
@@ -762,6 +905,7 @@ module Keyboard = {
         | "Minus" => selectLayer(ansi.hyphen)
         | "Equal" => selectLayer(ansi.equal)
         | "Backspace" =>
+          Trace.reset()
           setState(((offset, text, color, highlightColor)) => {
             let offset = offset > -1 ? offset - 1 : -1
             (offset, text, color, highlightColor)
@@ -1092,6 +1236,7 @@ module Keyboard = {
           </div>
         </div>
         <svg id="Traces" className="absolute inset-0 w-full h-full pointer-events-none" />
+        <div id="Bumps" className="absolute inset-0 pointer-events-none" />
       </div>
     }
   }
