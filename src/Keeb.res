@@ -251,7 +251,7 @@ module Ansi = {
     right_shift: ["shift"],
   }
 
-  let graphite = {
+  let amaranth = {
     tilde: ["`", "~"],
     one: ["1", "!"],
     two: ["2", "@"],
@@ -307,6 +307,127 @@ module Ansi = {
     right_shift: ["shift"],
   }
 
+  let dvorak = {
+    tilde: ["`", "~"],
+    one: ["1", "!"],
+    two: ["2", "@"],
+    three: ["3", "#"],
+    four: ["4", "$"],
+    five: ["5", "%"],
+    six: ["6", "^"],
+    seven: ["7", "&"],
+    eight: ["8", "*"],
+    nine: ["9", "("],
+    zero: ["0", ")"],
+    hyphen: ["[", "{"],
+    equal: ["]", "}"],
+    backspace: ["delete"],
+    tab: ["tab"],
+    q: ["'", "\""],
+    w: [",", "<"],
+    e: [".", ">"],
+    r: ["P"],
+    t: ["Y"],
+    y: ["F"],
+    u: ["G"],
+    i: ["C"],
+    o: ["R"],
+    p: ["L"],
+    open_bracket: ["/", "?"],
+    close_bracket: ["=", "+"],
+    backslash: ["\\", "|"],
+    caps_lock: ["caps"],
+    a: ["A"],
+    s: ["O"],
+    d: ["E"],
+    f: ["U"],
+    g: ["I"],
+    h: ["D"],
+    j: ["H"],
+    k: ["T"],
+    l: ["N"],
+    semicolon: ["S"],
+    quote: ["-", "_"],
+    enter: ["return"],
+    left_shift: ["shift"],
+    z: [";", ":"],
+    x: ["Q"],
+    c: ["J"],
+    v: ["K"],
+    b: ["X"],
+    n: ["B"],
+    m: ["M"],
+    comma: ["W"],
+    period: ["V"],
+    slash: ["Z"],
+    right_shift: ["shift"],
+  }
+
+  let colemak = {
+    tilde: ["`", "~"],
+    one: ["1", "!"],
+    two: ["2", "@"],
+    three: ["3", "#"],
+    four: ["4", "$"],
+    five: ["5", "%"],
+    six: ["6", "^"],
+    seven: ["7", "&"],
+    eight: ["8", "*"],
+    nine: ["9", "("],
+    zero: ["0", ")"],
+    hyphen: ["-", "_"],
+    equal: ["=", "+"],
+    backspace: ["delete"],
+    tab: ["tab"],
+    q: ["Q"],
+    w: ["W"],
+    e: ["F"],
+    r: ["P"],
+    t: ["G"],
+    y: ["J"],
+    u: ["L"],
+    i: ["U"],
+    o: ["Y"],
+    p: [";", ":"],
+    open_bracket: ["[", "{"],
+    close_bracket: ["]", "}"],
+    backslash: ["\\", "|"],
+    caps_lock: ["caps"],
+    a: ["A"],
+    s: ["R"],
+    d: ["S"],
+    f: ["T"],
+    g: ["D"],
+    h: ["H"],
+    j: ["N"],
+    k: ["E"],
+    l: ["I"],
+    semicolon: ["O"],
+    quote: ["'", "\""],
+    enter: ["return"],
+    left_shift: ["shift"],
+    z: ["Z"],
+    x: ["X"],
+    c: ["C"],
+    v: ["V"],
+    b: ["B"],
+    n: ["K"],
+    m: ["M"],
+    comma: [",", "<"],
+    period: [".", ">"],
+    slash: ["/", "?"],
+    right_shift: ["shift"],
+  }
+
+  // The layouts the board can switch between, in the order they are offered.
+  type layout = {id: string, name: string, board: t}
+  let layouts = [
+    {id: "amaranth", name: "Amaranth", board: amaranth},
+    {id: "qwerty", name: "QWERTY", board: qwerty},
+    {id: "dvorak", name: "Dvorak", board: dvorak},
+    {id: "colemak", name: "Colemak", board: colemak},
+  ]
+
   // Every character-bearing physical key, named by its KeyboardEvent code and
   // paired with the labels a layout puts on it. The modifiers are left out:
   // they carry no characters, so nothing can be typed on them.
@@ -360,8 +481,8 @@ module Ansi = {
     ("Slash", t.slash),
   ]
 
-  // Note: this predates the `graphite` record above and no longer agrees with
-  // it. Only `runText` still reads it; the live keyboard goes through the
+  // Note: this is Graphite proper, not the `amaranth` record above, and does not
+  // agree with it. Only `runText` still reads it; the live keyboard goes through the
   // record, so derive from `keycodes` rather than from here.
   let graphite2Keycode = char =>
     switch char {
@@ -584,10 +705,10 @@ module Fingering = {
   let sigOf = keys => keys->Array.joinWith(" ")
 
   // Which physical key carries a character, read off the record that draws the
-  // board. Ansi.graphite2Keycode is an older layout that no longer agrees.
-  let charKey = {
+  // board. Ansi.graphite2Keycode is Graphite proper, a different layout.
+  let keyMap = board => {
     let d = Dict.make()
-    Ansi.keycodes(Ansi.graphite)->Array.forEach(((keycode, labels)) =>
+    Ansi.keycodes(board)->Array.forEach(((keycode, labels)) =>
       labels->Array.forEach(label => {
         let ch = label->String.toLowerCase
         switch d->Dict.get(ch) {
@@ -598,6 +719,11 @@ module Fingering = {
     )
     d
   }
+
+  // The map for the layout on the board.
+  let charKey = ref(keyMap(Ansi.amaranth))
+
+  let setLayout = board => charKey := keyMap(board)
 
   // Only "alt" entries carry a fingering; "none" means the default is the only
   // way to type the word, which is what a lookup miss already yields.
@@ -652,7 +778,7 @@ module Fingering = {
       } else {
         let keys = []
         for i in start.contents to stop.contents {
-          switch charKey->Dict.get(charAt(text, i)) {
+          switch charKey.contents->Dict.get(charAt(text, i)) {
           | Some(keycode) => keys->Array.push(keycode)
           | None => ()
           }
@@ -820,7 +946,7 @@ module Trace = {
     let left = {keys: [], offsets: []}
     let right = {keys: [], offsets: []}
     for i in start to stop {
-      switch Fingering.charKey->Dict.get(Fingering.charAt(text, i)) {
+      switch Fingering.charKey.contents->Dict.get(Fingering.charAt(text, i)) {
       | Some(keycode) =>
         let hand = Fingering.at(text, i, keycode)->Js.String2.charAt(0) == "l" ? left : right
         if hand.keys->Array.get(hand.keys->Array.length - 1) != Some(keycode) {
@@ -1071,6 +1197,12 @@ module Trace = {
         w.gone = true
       }, fadeMs),
     )
+  }
+
+  // Drop the word on screen, so the next sync plans it afresh.
+  let forget = () => {
+    current.contents->Option.forEach(w => w.group->Dom.Element.remove)
+    current := None
   }
 
   // Bring the trails in line with the cursor: `offset` is the last character
@@ -1368,8 +1500,34 @@ module Keyboard = {
 
   @get external body: Dom.document => Dom.element = "body"
 
-  let handleKC = (ev, ~t, ~setState, ~nextText) => {
-    let kc = Webapi.Dom.KeyboardEvent.code(ev)
+  // How a key press becomes a character. Translate: the OS is on QWERTY, and
+  // each physical key is read through the board's layout. Passthru: the OS is
+  // already on the board's layout, so the character it produced is used as is.
+  type input = Translate | Passthru
+
+  // Keys that drive the page rather than type, however keys are read.
+  let isControl = code =>
+    switch code {
+    | "Escape"
+    | "F1"
+    | "F2"
+    | "F3"
+    | "F4"
+    | "F5"
+    | "F6"
+    | "F7"
+    | "F8"
+    | "F9"
+    | "F10"
+    | "F11"
+    | "F12"
+    | "Tab"
+    | "Backspace" => true
+    | _ => false
+    }
+
+  let handleKC = (ev, ~t, ~input, ~setState, ~nextText) => {
+    let code = Webapi.Dom.KeyboardEvent.code(ev)
     let selectLayer = x => {
       if Webapi.Dom.KeyboardEvent.shiftKey(ev) {
         switch x->Array.get(1) {
@@ -1381,10 +1539,11 @@ module Keyboard = {
       }
     }
 
-    let char = {
+    // Translate: the key's physical position, read through the board's layout.
+    let translated = () => {
       switch t {
       | #Ansi(ansi: Ansi.t) =>
-        switch kc {
+        switch code {
         | "Escape"
         | "F1"
         | "F2"
@@ -1478,6 +1637,19 @@ module Keyboard = {
         }
       }
     }
+    let (kc, char) = switch input {
+    | Passthru if !isControl(code) =>
+      // Passthru: take the character the OS produced, and light the key that
+      // carries it on the board.
+      let key = Webapi.Dom.KeyboardEvent.key(ev)
+      if key->String.length == 1 {
+        let onBoard = Fingering.charKey.contents->Dict.get(key->String.toLowerCase)
+        (onBoard->Option.getWithDefault(code), Some(key))
+      } else {
+        (code, None)
+      }
+    | _ => (code, translated())
+    }
     setState(((i, text, color, highlightColor)) => {
       switch char {
       | None => (i, text, color, highlightColor)
@@ -1500,22 +1672,25 @@ module Keyboard = {
     })
   }
 
-  let onKeyDown = (ev: Webapi.Dom.KeyboardEvent.t, ~t: t, ~setState, ~nextText) => {
-    let target = Webapi.Dom.KeyboardEvent.target(ev)
+  let onKeyDown = (ev: Webapi.Dom.KeyboardEvent.t, ~t: t, ~input, ~setState, ~nextText) => {
+    module K = Webapi.Dom.KeyboardEvent
+    let target = K.target(ev)
     let body = document->body
-    if Obj.magic(target) === body {
+    if K.metaKey(ev) || K.ctrlKey(ev) || K.altKey(ev) {
+      () // a shortcut, such as the command palette's, not typing
+    } else if Obj.magic(target) === body {
       ev->Webapi.Dom.KeyboardEvent.preventDefault
-      ev->handleKC(~t, ~setState, ~nextText)
+      ev->handleKC(~t, ~input, ~setState, ~nextText)
     } else {
       Js.log(ev)
     }
   }
 
-  let useListener = (t, ~setState, ~nextText) => {
+  let useListener = (t, ~input, ~setState, ~nextText) => {
     module Dom = Webapi.Dom
-    let onKeyDown = React.useMemo3(() => {
-      onKeyDown(~t, ~setState, ~nextText)
-    }, (t, setState, nextText))
+    let onKeyDown = React.useMemo4(() => {
+      onKeyDown(~t, ~input, ~setState, ~nextText)
+    }, (t, input, setState, nextText))
     React.useEffect1(() => {
       window->Dom.Window.addKeyDownEventListener(onKeyDown)
       Some(() => window->Dom.Window.removeKeyDownEventListener(onKeyDown))
@@ -1760,8 +1935,8 @@ module Keyboard = {
   }
 
   @react.component
-  let make = (~t: t, ~setState, ~nextText) => {
-    useListener(t, ~setState, ~nextText)
+  let make = (~t: t, ~input, ~setState, ~nextText) => {
+    useListener(t, ~input, ~setState, ~nextText)
     <Grid t />
   }
 }
@@ -1817,7 +1992,105 @@ let default = (props: props) => {
   })
 
   let (runState, setRunState) = React.useState(() => #Init)
-  let ansi = Ansi.graphite
+
+  let (layoutId, setLayoutId) = React.useState(() => "amaranth")
+  let layout =
+    Ansi.layouts
+    ->Array.find(l => l.id == layoutId)
+    ->Option.getWithDefault(Ansi.layouts->Array.getUnsafe(0))
+  let ansi = layout.board
+
+  let (input, setInput) = React.useState(() => Keyboard.Translate)
+  let inputName = input =>
+    switch input {
+    | Keyboard.Translate => "Translate"
+    | Passthru => "Passthru"
+    }
+
+  // Settings are remembered per browser. Storage can be missing or refuse
+  // access, in which case the page just starts on the defaults.
+  let remembered = key =>
+    try {
+      Dom.Storage.localStorage->Dom.Storage.getItem(key, _)
+    } catch {
+    | _ => None
+    }
+  let remember = (key, value) =>
+    try {
+      Dom.Storage.localStorage->Dom.Storage.setItem(key, value, _)
+    } catch {
+    | _ => ()
+    }
+
+  React.useEffect0(() => {
+    switch remembered("layout") {
+    | Some(id) if Ansi.layouts->Array.some(l => l.id == id) => setLayoutId(_ => id)
+    | _ => ()
+    }
+    switch remembered("input") {
+    | Some("Passthru") => setInput(_ => Passthru)
+    | _ => ()
+    }
+    None
+  })
+
+  // Typing and trails read characters off the layout on the board.
+  React.useEffect1(() => {
+    Fingering.setLayout(ansi)
+    Trace.forget()
+    remember("layout", layoutId)
+    None
+  }, [layoutId])
+
+  React.useEffect1(() => {
+    remember("input", inputName(input))
+    None
+  }, [input])
+
+  let commands: Palette.page = {
+    title: "Commands",
+    placeholder: "Type a command…",
+    items: [
+      {
+        label: "Choose layout…",
+        hint: layout.name,
+        checked: false,
+        action: Open({
+          title: "Layout",
+          placeholder: "Choose a layout…",
+          items: Ansi.layouts->Array.map(l => {
+            Palette.label: l.name,
+            hint: "",
+            checked: l.id == layoutId,
+            action: Run(() => setLayoutId(_ => l.id)),
+          }),
+        }),
+      },
+      {
+        label: "Choose input…",
+        hint: inputName(input),
+        checked: false,
+        action: Open({
+          title: "Input",
+          placeholder: "Choose how key presses are read…",
+          items: [
+            {
+              Palette.label: "Translate",
+              hint: `OS on QWERTY, keys mapped to ${layout.name}`,
+              checked: input == Translate,
+              action: Run(() => setInput(_ => Translate)),
+            },
+            {
+              label: "Passthru",
+              hint: `OS already on ${layout.name}, keys used as typed`,
+              checked: input == Passthru,
+              action: Run(() => setInput(_ => Passthru)),
+            },
+          ],
+        }),
+      },
+    ],
+  }
 
   // The table is read inside keypress handlers, so it only has to be in place
   // before the first one; an effect keeps it off the server render path.
@@ -1826,12 +2099,12 @@ let default = (props: props) => {
     None
   }, [props.fingerings])
 
-  React.useEffect3(() => {
+  React.useEffect4(() => {
     if Trace.showTrails {
       Trace.sync(~text, ~offset, ~color)
     }
     None
-  }, (text, offset, color))
+  }, (text, offset, color, layoutId))
 
   // React.useEffect1(() => {
   //   switch runState {
@@ -1844,6 +2117,10 @@ let default = (props: props) => {
   // }, [runState])
 
   <div className="flex bg-b flex-col gap-8 w-[942px]">
+    <div className="flex justify-end gap-3 font-mono text-sm text-slate-700">
+      <span> {React.string(layout.name ++ " · " ++ inputName(input)->String.toLowerCase)} </span>
+      <span className="text-slate-600"> {React.string("⌘K for commands")} </span>
+    </div>
     <button
       className="bg-slate-800 p-6 rounded-xl shadow-2xl text-3xl font-mono text-white"
       onClick={_ => setRunState(_ => #Running)}
@@ -1866,6 +2143,7 @@ let default = (props: props) => {
         }),
       )}
     </button>
-    <Keyboard t={#Ansi(ansi)} setState nextText />
+    <Keyboard t={#Ansi(ansi)} input setState nextText />
+    <Palette root=commands />
   </div>
 }
