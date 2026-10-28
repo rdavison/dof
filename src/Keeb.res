@@ -712,10 +712,13 @@ module Trace = {
   let bumpMs = 450
   let traceMs = 150
 
-  // The trail is a glowing comet: brightest and widest at the orb, thinning to nothing
-  // `tailPx` back along the path. It is drawn as pieces about `piecePx` long so
-  // each can carry its own alpha.
+  // The trail is a glowing comet: brightest and widest at the orb, thinning to
+  // nothing some way back along the path. The tail reaches `tailReach` times the
+  // last hop, so it always stretches back past the previous key, and never
+  // less than `tailPx`. It is drawn as pieces about `piecePx` long so each can
+  // carry its own alpha.
   let tailPx = 160.
+  let tailReach = 1.3
   let piecePx = 6.
   // alpha and width at the head of the comet, falling to nothing and to
   // `tailWidth` at the end of the tail
@@ -862,6 +865,8 @@ module Trace = {
     // keys reached so far, and how much of the path is drawn
     mutable reached: int,
     mutable drawn: float,
+    // how far back the tail reaches
+    mutable tail: float,
     mutable frame: option<Webapi.rafId>,
   }
 
@@ -962,7 +967,7 @@ module Trace = {
       core->Dom.Element.setAttribute("fill", "white")
       orb->Dom.Element.appendChild(~child=core)
       group->Dom.Element.appendChild(~child=orb)
-      Some({offsets: plan.offsets, lengths, path, pieces, orb, reached: 0, drawn: 0., frame: None})
+      Some({offsets: plan.offsets, lengths, path, pieces, orb, reached: 0, drawn: 0., tail: tailPx, frame: None})
     | _ => None
     }
   }
@@ -1005,7 +1010,7 @@ module Trace = {
           // a dash covering [a, a + shown] of the path
           piece->Dom.Element.setAttribute("stroke-dasharray", `0 ${f(a)} ${f(shown)} ${f(total)}`)
           // 1 at the head, 0 at the end of the tail
-          let k = Js.Math.max_float(0., 1. -. (len -. (a +. shown)) /. tailPx)
+          let k = Js.Math.max_float(0., 1. -. (len -. (a +. shown)) /. t.tail)
           piece->Dom.Element.setAttribute("stroke-opacity", f(headOpacity *. k))
           piece->Dom.Element.setAttribute("stroke-width", f(tailWidth +. (headWidth -. tailWidth) *. k))
         }
@@ -1024,6 +1029,8 @@ module Trace = {
       t.frame = None
       t.orb->Dom.Element.setAttribute("opacity", reached == 0 ? "0" : "1")
       let target = reached == 0 ? 0. : t.lengths->Array.getUnsafe(reached - 1)
+      let hop = reached < 2 ? 0. : target -. t.lengths->Array.getUnsafe(reached - 2)
+      t.tail = Js.Math.max_float(tailPx, hop *. tailReach)
       let from = t.drawn
       let began = ref(None)
       let rec step = now => {
