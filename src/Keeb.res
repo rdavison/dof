@@ -130,11 +130,33 @@ module Key = {
       | _ => failwith("")
       }
     }
-    <div
-      id
-      className={`${shape} m-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex`}>
-      <div className="m-auto"> {label} </div>
-    </div>
+    // In the layout editor, character keys can be dragged and selected.
+    let edit = switch React.useContext(Editor.context) {
+    | Some(e) if e.editable(id) => Some(e)
+    | _ => None
+    }
+    let editing = switch edit {
+    | Some(e) =>
+      " cursor-grab select-none touch-none" ++ if e.target == Some(id) {
+        " ring-2 ring-amber-300"
+      } else if e.selected == Some(id) {
+        " ring-2 ring-sky-400"
+      } else {
+        ""
+      } ++ (e.source == Some(id) ? " opacity-30" : "")
+    | None => ""
+    }
+    let key =
+      <div
+        id
+        className={`${shape} m-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex${editing}`}
+        onPointerDown=?{edit->Option.map(e => ev => e.onPointerDown(id, ev))}>
+        <div className="m-auto"> {label} </div>
+      </div>
+    switch edit {
+    | Some(_) => React.cloneElement(key, {"data-key": id})
+    | None => key
+    }
   }
 }
 
@@ -480,6 +502,170 @@ module Ansi = {
     ("Period", t.period),
     ("Slash", t.slash),
   ]
+
+  // The character keys, by code, in board order.
+  let codes = keycodes(qwerty)->Array.map(fst)
+
+  let labelsOf = (t, code) =>
+    keycodes(t)->Array.find(((c, _)) => c == code)->Option.map(snd)
+
+  // `t` with one key's labels replaced. A code that is not a character key
+  // leaves it as it is.
+  let withKey = (t, code, labels) =>
+    switch code {
+    | "Backquote" => {...t, tilde: labels}
+    | "Digit1" => {...t, one: labels}
+    | "Digit2" => {...t, two: labels}
+    | "Digit3" => {...t, three: labels}
+    | "Digit4" => {...t, four: labels}
+    | "Digit5" => {...t, five: labels}
+    | "Digit6" => {...t, six: labels}
+    | "Digit7" => {...t, seven: labels}
+    | "Digit8" => {...t, eight: labels}
+    | "Digit9" => {...t, nine: labels}
+    | "Digit0" => {...t, zero: labels}
+    | "Minus" => {...t, hyphen: labels}
+    | "Equal" => {...t, equal: labels}
+    | "KeyQ" => {...t, q: labels}
+    | "KeyW" => {...t, w: labels}
+    | "KeyE" => {...t, e: labels}
+    | "KeyR" => {...t, r: labels}
+    | "KeyT" => {...t, t: labels}
+    | "KeyY" => {...t, y: labels}
+    | "KeyU" => {...t, u: labels}
+    | "KeyI" => {...t, i: labels}
+    | "KeyO" => {...t, o: labels}
+    | "KeyP" => {...t, p: labels}
+    | "BracketLeft" => {...t, open_bracket: labels}
+    | "BracketRight" => {...t, close_bracket: labels}
+    | "Backslash" => {...t, backslash: labels}
+    | "KeyA" => {...t, a: labels}
+    | "KeyS" => {...t, s: labels}
+    | "KeyD" => {...t, d: labels}
+    | "KeyF" => {...t, f: labels}
+    | "KeyG" => {...t, g: labels}
+    | "KeyH" => {...t, h: labels}
+    | "KeyJ" => {...t, j: labels}
+    | "KeyK" => {...t, k: labels}
+    | "KeyL" => {...t, l: labels}
+    | "Semicolon" => {...t, semicolon: labels}
+    | "Quote" => {...t, quote: labels}
+    | "KeyZ" => {...t, z: labels}
+    | "KeyX" => {...t, x: labels}
+    | "KeyC" => {...t, c: labels}
+    | "KeyV" => {...t, v: labels}
+    | "KeyB" => {...t, b: labels}
+    | "KeyN" => {...t, n: labels}
+    | "KeyM" => {...t, m: labels}
+    | "Comma" => {...t, comma: labels}
+    | "Period" => {...t, period: labels}
+    | "Slash" => {...t, slash: labels}
+    | _ => t
+    }
+
+  let swap = (t, a, b) =>
+    switch (labelsOf(t, a), labelsOf(t, b)) {
+    | (Some(la), Some(lb)) => t->withKey(a, lb)->withKey(b, la)
+    | _ => t
+    }
+
+  // What a key types without and with shift. A single label is a letter, whose
+  // base is its lower case.
+  let layers = labels =>
+    switch labels {
+    | [x] => (x->String.toLowerCase, x)
+    | [x, y] => (x, y)
+    | _ => ("", "")
+    }
+
+  // The labels for a key typing `base` and `shift`. A letter with its own
+  // capital on shift keeps the single-label look.
+  let labelsFor = (base, shift) =>
+    base != shift && base->String.toLowerCase == base && base->String.toUpperCase == shift
+      ? [shift]
+      : [base, shift]
+
+  // Counts characters as people see them, so an emoji is one.
+  let length: string => int = %raw(`s => [...s].length`)
+
+  // A layout as a file, for saving, export and import.
+  let toJson = (name, t) => {
+    let keys = Js.Dict.empty()
+    keycodes(t)->Array.forEach(((code, labels)) => {
+      let (base, shift) = layers(labels)
+      keys->Js.Dict.set(
+        code,
+        Js.Json.object_(
+          Js.Dict.fromArray([("base", Js.Json.string(base)), ("shift", Js.Json.string(shift))]),
+        ),
+      )
+    })
+    Js.Json.object_(
+      Js.Dict.fromArray([
+        ("format", Js.Json.string("dof-layout")),
+        ("version", Js.Json.number(1.)),
+        ("name", Js.Json.string(name)),
+        ("keys", Js.Json.object_(keys)),
+      ]),
+    )
+  }
+
+  let stringify = (name, t) => toJson(name, t)->Js.Json.stringifyWithSpace(2)
+
+  exception Invalid(string)
+
+  // A layout file read back. Keys it leaves out come from QWERTY. The error
+  // names what is wrong, for showing to whoever pasted it.
+  let fromJson = json =>
+    try {
+      let obj = switch json->Js.Json.decodeObject {
+      | Some(o) => o
+      | None => raise(Invalid("not a layout: expected an object"))
+      }
+      let get = (o, k) => o->Js.Dict.get(k)
+      if get(obj, "format")->Option.flatMap(Js.Json.decodeString) != Some("dof-layout") {
+        raise(Invalid(`not a layout: "format" should be "dof-layout"`))
+      }
+      if get(obj, "version")->Option.flatMap(Js.Json.decodeNumber) != Some(1.) {
+        raise(Invalid(`unsupported "version": expected 1`))
+      }
+      let name = switch get(obj, "name")->Option.flatMap(Js.Json.decodeString) {
+      | Some(n) if n->String.trim != "" => n->String.trim
+      | _ => raise(Invalid(`"name" must be a non-empty string`))
+      }
+      let keys = switch get(obj, "keys")->Option.flatMap(Js.Json.decodeObject) {
+      | Some(k) => k
+      | None => raise(Invalid(`"keys" must be an object`))
+      }
+      let board = keys->Js.Dict.entries->Array.reduce(qwerty, (t, (code, v)) => {
+        if !(codes->Array.includes(code)) {
+          raise(Invalid(`${code} is not a character key`))
+        }
+        let o = switch v->Js.Json.decodeObject {
+        | Some(o) => o
+        | None => raise(Invalid(`${code}: expected {"base": …, "shift": …}`))
+        }
+        let one = layer =>
+          switch get(o, layer)->Option.flatMap(Js.Json.decodeString) {
+          | Some(c) if length(c) == 1 => c
+          | _ => raise(Invalid(`${code}: ${layer} must be one character`))
+          }
+        t->withKey(code, labelsFor(one("base"), one("shift")))
+      })
+      Ok((name, board))
+    } catch {
+    | Invalid(message) => Error(message)
+    }
+
+  let parse = text =>
+    switch try {
+      Some(Js.Json.parseExn(text))
+    } catch {
+    | _ => None
+    } {
+    | Some(json) => fromJson(json)
+    | None => Error("not valid JSON")
+    }
 
   // Note: this is Graphite proper, not the `amaranth` record above, and does not
   // agree with it. Only `runText` still reads it; the live keyboard goes through the
@@ -1547,6 +1733,8 @@ module Keyboard = {
 
   let handleKC = (ev, ~t, ~input, ~setState, ~nextText) => {
     let code = Webapi.Dom.KeyboardEvent.code(ev)
+    // A single label is a letter, typed in lower case without shift; a pair is
+    // (base, shift), typed as written.
     let selectLayer = x => {
       if Webapi.Dom.KeyboardEvent.shiftKey(ev) {
         switch x->Array.get(1) {
@@ -1554,7 +1742,10 @@ module Keyboard = {
         | Some(_) as res => res
         }
       } else {
-        x->Array.get(0)->Option.map(String.toLowerCase)
+        switch x {
+        | [single] => Some(single->String.toLowerCase)
+        | _ => x->Array.get(0)
+        }
       }
     }
 
@@ -1992,6 +2183,20 @@ let getStaticProps: Next.GetStaticProps.t<props, 'params, 'previewData> = _conte
   Js.Promise.resolve({"props": props})
 }
 
+// A layout open in the editor. Edits change `board`; Save writes it to the
+// custom layout `saved`, or to a new one when it began as a built-in.
+type draft = {
+  saved: option<string>,
+  name: string,
+  board: Ansi.t,
+  // what was last saved, to tell whether anything has changed since
+  savedName: string,
+  savedBoard: Ansi.t,
+}
+
+@val @scope(("navigator", "clipboard"))
+external writeText: string => Js.Promise.t<unit> = "writeText"
+
 let default = (props: props) => {
   let quotes = props.corpus.quotes
   let nextText = () => {
@@ -2012,12 +2217,33 @@ let default = (props: props) => {
 
   let (runState, setRunState) = React.useState(() => #Init)
 
+  // Layouts saved from the editor or imported, kept in this browser.
+  let (customLayouts, setCustomLayouts) = React.useState(() => [])
+  let allLayouts = Ansi.layouts->Array.concat(customLayouts)
+  let isCustom = id => customLayouts->Array.some(l => l.id == id)
+
   let (layoutId, setLayoutId) = React.useState(() => "amaranth")
   let layout =
-    Ansi.layouts
+    allLayouts
     ->Array.find(l => l.id == layoutId)
     ->Option.getWithDefault(Ansi.layouts->Array.getUnsafe(0))
-  let ansi = layout.board
+
+  let (draft, setDraft) = React.useState(() => None)
+  let (selected, setSelected) = React.useState(() => None)
+  // While editing, the board shows and types with the draft.
+  let ansi = switch draft {
+  | Some(d) => d.board
+  | None => layout.board
+  }
+
+  let (toast, setToast) = React.useState(() => None)
+  let (importing, setImporting) = React.useState(() => false)
+  let (importText, setImportText) = React.useState(() => "")
+  let (importError, setImportError) = React.useState(() => None)
+  // A layout's JSON, shown for copying by hand when the clipboard refuses it.
+  let (exported, setExported) = React.useState(() => None)
+  // A question waiting for a yes: (question, button label, what yes does).
+  let (confirming, setConfirming) = React.useState(() => None)
 
   let (input, setInput) = React.useState(() => Keyboard.Translate)
 
@@ -2047,9 +2273,72 @@ let default = (props: props) => {
     | _ => ()
     }
 
+  // Custom layouts are stored as layout files, each with its id.
+  let storeCustom = layouts =>
+    remember(
+      "customLayouts",
+      layouts
+      ->Array.map((l: Ansi.layout) =>
+        Js.Json.object_(
+          Js.Dict.fromArray([("id", Js.Json.string(l.id)), ("layout", Ansi.toJson(l.name, l.board))]),
+        )
+      )
+      ->Js.Json.array
+      ->Js.Json.stringify,
+    )
+  let loadCustom = () =>
+    switch remembered("customLayouts")->Option.flatMap(text =>
+      try {
+        Js.Json.parseExn(text)->Js.Json.decodeArray
+      } catch {
+      | _ => None
+      }
+    ) {
+    | Some(entries) =>
+      entries->Array.filterMap(entry =>
+        switch entry->Js.Json.decodeObject {
+        | Some(o) =>
+          switch (
+            o->Js.Dict.get("id")->Option.flatMap(Js.Json.decodeString),
+            o->Js.Dict.get("layout")->Option.map(Ansi.fromJson),
+          ) {
+          | (Some(id), Some(Ok((name, board)))) => Some({Ansi.id, name, board})
+          | _ => None
+          }
+        | None => None
+        }
+      )
+    | None => []
+    }
+  let updateCustom = f =>
+    setCustomLayouts(layouts => {
+      let next = f(layouts)
+      storeCustom(next)
+      next
+    })
+  let newId = () => "custom-" ++ Js.Date.now()->Js.Float.toFixed
+
+  // A name no other layout has, by counting up: "My Dvorak 2", "My Dvorak 3"…
+  let uniqueName = (name, ~except) => {
+    let taken = n => allLayouts->Array.some(l => l.name == n && Some(l.id) != except)
+    if !taken(name) {
+      name
+    } else {
+      let i = ref(2)
+      while taken(`${name} ${Int.toString(i.contents)}`) {
+        i := i.contents + 1
+      }
+      `${name} ${Int.toString(i.contents)}`
+    }
+  }
+
   React.useEffect0(() => {
+    let custom = loadCustom()
+    setCustomLayouts(_ => custom)
     switch remembered("layout") {
-    | Some(id) if Ansi.layouts->Array.some(l => l.id == id) => setLayoutId(_ => id)
+    | Some(id)
+      if Ansi.layouts->Array.some(l => l.id == id) || custom->Array.some(l => l.id == id) =>
+      setLayoutId(_ => id)
     | _ => ()
     }
     switch remembered("input") {
@@ -2063,13 +2352,152 @@ let default = (props: props) => {
     None
   })
 
-  // Typing and trails read characters off the layout on the board.
+  // Typing and trails read characters off the layout on the board, which an
+  // edit changes without changing the layout's id.
   React.useEffect1(() => {
     Fingering.setLayout(ansi)
     Trace.forget()
+    None
+  }, [ansi])
+
+  React.useEffect1(() => {
     remember("layout", layoutId)
     None
   }, [layoutId])
+
+  React.useEffect1(() => {
+    switch toast {
+    | Some(_) =>
+      let timer = Js.Global.setTimeout(() => setToast(_ => None), 2000)
+      Some(() => Js.Global.clearTimeout(timer))
+    | None => None
+    }
+  }, [toast])
+
+  let editDraft = f => setDraft(d => d->Option.map(f))
+
+  let startEditing = () =>
+    setDraft(_ => Some(
+      if isCustom(layout.id) {
+        {
+          saved: Some(layout.id),
+          name: layout.name,
+          board: layout.board,
+          savedName: layout.name,
+          savedBoard: layout.board,
+        }
+      } else {
+        {
+          saved: None,
+          name: "My " ++ layout.name,
+          board: layout.board,
+          savedName: "",
+          savedBoard: layout.board,
+        }
+      },
+    ))
+
+  // Unsaved edits. A fresh copy of a built-in with no edits has nothing to lose.
+  let changed = d => d.board != d.savedBoard || (d.saved != None && d.name != d.savedName)
+
+  let save = () =>
+    switch draft {
+    | Some(d) if d.name->String.trim != "" =>
+      let name = uniqueName(d.name->String.trim, ~except=d.saved)
+      let id = d.saved->Option.getWithDefault(newId())
+      updateCustom(layouts =>
+        switch d.saved {
+        | Some(_) => layouts->Array.map(l => l.id == id ? {...l, name, board: d.board} : l)
+        | None => layouts->Array.concat([{Ansi.id, name, board: d.board}])
+        }
+      )
+      setLayoutId(_ => id)
+      setDraft(_ => Some({...d, saved: Some(id), name, savedName: name, savedBoard: d.board}))
+      setToast(_ => Some(`Saved ${name}`))
+    | _ => ()
+    }
+
+  let close = () => {
+    let discard = () => {
+      setDraft(_ => None)
+      setSelected(_ => None)
+    }
+    switch draft {
+    | Some(d) if changed(d) =>
+      setConfirming(_ => Some((`Discard changes to ${d.name}?`, "Discard", discard)))
+    | _ => discard()
+    }
+  }
+
+  let delete = () =>
+    switch draft {
+    | Some({saved: Some(id), name}) =>
+      setConfirming(_ => Some((
+        `Delete ${name}?`,
+        "Delete",
+        () => {
+          updateCustom(layouts => layouts->Array.filter(l => l.id != id))
+          setLayoutId(_ => "amaranth")
+          setDraft(_ => None)
+          setSelected(_ => None)
+          setToast(_ => Some(`Deleted ${name}`))
+        },
+      )))
+    | _ => ()
+    }
+
+  // Copy a layout file to the clipboard, or show it when the browser refuses.
+  let exportLayout = () => {
+    let name = switch draft {
+    | Some(d) => d.name
+    | None => layout.name
+    }
+    let json = Ansi.stringify(name, ansi)
+    let refused = () => setExported(_ => Some(json))
+    let _ = try {
+      writeText(json)
+      ->Js.Promise.then_(() => {
+        setToast(_ => Some(`Copied ${name} to the clipboard`))
+        Js.Promise.resolve()
+      }, _)
+      ->Js.Promise.catch(_ => {
+        refused()
+        Js.Promise.resolve()
+      }, _)
+    } catch {
+    | _ =>
+      refused()
+      Js.Promise.resolve()
+    }
+  }
+
+  let importLayout = () =>
+    switch Ansi.parse(importText) {
+    | Ok((name, board)) =>
+      let name = uniqueName(name, ~except=None)
+      let id = newId()
+      updateCustom(layouts => layouts->Array.concat([{Ansi.id, name, board}]))
+      setLayoutId(_ => id)
+      setImporting(_ => false)
+      setImportText(_ => "")
+      setImportError(_ => None)
+      setToast(_ => Some(`Imported ${name}`))
+    | Error(message) => setImportError(_ => Some(message))
+    }
+
+  let (drag, onPointerDown) = Editor.useDrag(
+    ~onSwap=(a, b) => editDraft(d => {...d, board: Ansi.swap(d.board, a, b)}),
+    ~onSelect=code => setSelected(_ => Some(code)),
+  )
+  let editor = draft->Option.map(_ => {
+    Editor.editable: code => Ansi.codes->Array.includes(code),
+    selected,
+    source: drag->Option.flatMap((d: Editor.drag) => d.moved ? Some(d.code) : None),
+    target: drag->Option.flatMap((d: Editor.drag) =>
+      d.target->Option.flatMap(t => t != d.code ? Some(t) : None)
+    ),
+    onPointerDown,
+  })
 
   React.useEffect1(() => {
     remember("input", inputName(input))
@@ -2084,25 +2512,51 @@ let default = (props: props) => {
     None
   }, [profileId])
 
-  let commands: Palette.page = {
-    title: "Commands",
-    placeholder: "Type a command…",
-    items: [
+  let exportCommand = {
+    Palette.label: "Export layout",
+    hint: "copy to the clipboard",
+    checked: false,
+    action: Run(exportLayout),
+  }
+  // While editing, the layout stays put until the editor is closed.
+  let layoutCommands = switch draft {
+  | Some(_) => [exportCommand]
+  | None => [
       {
-        label: "Choose layout…",
+        Palette.label: "Choose layout…",
         hint: layout.name,
         checked: false,
         action: Open({
           title: "Layout",
           placeholder: "Choose a layout…",
-          items: Ansi.layouts->Array.map(l => {
+          items: allLayouts->Array.map(l => {
             Palette.label: l.name,
-            hint: "",
+            hint: isCustom(l.id) ? "custom" : "",
             checked: l.id == layoutId,
             action: Run(() => setLayoutId(_ => l.id)),
           }),
         }),
       },
+      {
+        label: "Edit layout",
+        hint: layout.name,
+        checked: false,
+        action: Run(startEditing),
+      },
+      exportCommand,
+      {
+        label: "Import layout…",
+        hint: "paste a layout file",
+        checked: false,
+        action: Run(() => setImporting(_ => true)),
+      },
+    ]
+  }
+
+  let commands: Palette.page = {
+    title: "Commands",
+    placeholder: "Type a command…",
+    items: layoutCommands->Array.concat([
       {
         label: "Choose input…",
         hint: inputName(input),
@@ -2143,7 +2597,7 @@ let default = (props: props) => {
           }),
         }),
       },
-    ],
+    ]),
   }
 
   // The table is read inside keypress handlers, so it only has to be in place
@@ -2158,7 +2612,7 @@ let default = (props: props) => {
       Trace.sync(~text, ~offset, ~color)
     }
     None
-  }, (text, offset, color, layoutId, profileId))
+  }, (text, offset, color, ansi, profileId))
 
   // React.useEffect1(() => {
   //   switch runState {
@@ -2170,15 +2624,62 @@ let default = (props: props) => {
   //   None
   // }, [runState])
 
+  // Buttons that keep focus where it was, so typing carries on afterwards.
+  let button = (~label, ~onClick, ~disabled=false, ~danger=false, ()) =>
+    <button
+      className={"rounded px-3 py-1 disabled:opacity-40 " ++ (
+        danger
+          ? "text-red-300 hover:bg-red-950/60"
+          : "bg-slate-800 text-slate-100 hover:bg-slate-700"
+      )}
+      disabled
+      onMouseDown={e => ReactEvent.Mouse.preventDefault(e)}
+      onClick={_ => onClick()}>
+      {React.string(label)}
+    </button>
+
   <div className="flex bg-b flex-col gap-8 w-[942px]">
-    <div className="flex justify-end gap-3 font-mono text-sm text-slate-700">
-      <span>
-        {React.string(
-          [layout.name, inputName(input)->String.toLowerCase, profile.name]->Array.joinWith(" · "),
-        )}
-      </span>
-      <span className="text-slate-600"> {React.string("esc for commands")} </span>
-    </div>
+    {switch draft {
+    | Some(d) =>
+      <div className="flex items-center gap-3 font-mono text-sm text-slate-700">
+        <span> {React.string("Editing")} </span>
+        <input
+          className="w-56 rounded bg-slate-800 px-2 py-1 text-slate-100 outline-none ring-1 ring-white/10 focus:ring-sky-400"
+          value=d.name
+          placeholder="Layout name"
+          onChange={e => {
+            let name = ReactEvent.Form.target(e)["value"]
+            editDraft(d => {...d, name})
+          }}
+          onKeyDown={e =>
+            switch ReactEvent.Keyboard.key(e) {
+            | "Enter" => save()
+            | "Escape" => ReactEvent.Keyboard.target(e)["blur"](.)
+            | _ => ()
+            }}
+        />
+        <span className="whitespace-nowrap text-xs text-slate-600">
+          {React.string("drag to swap · click to edit")}
+        </span>
+        <div className="ml-auto flex gap-2">
+          {button(~label="Save", ~onClick=save, ~disabled=d.name->String.trim == "", ())}
+          {button(~label="Export", ~onClick=exportLayout, ())}
+          {d.saved != None ? button(~label="Delete", ~onClick=delete, ~danger=true, ()) : React.null}
+          {button(~label="Close", ~onClick=close, ())}
+        </div>
+      </div>
+    | None =>
+      <div className="flex justify-end gap-3 font-mono text-sm text-slate-700">
+        <span>
+          {React.string(
+            [layout.name, inputName(input)->String.toLowerCase, profile.name]->Array.joinWith(
+              " · ",
+            ),
+          )}
+        </span>
+        <span className="text-slate-600"> {React.string("esc for commands")} </span>
+      </div>
+    }}
     <button
       className="bg-slate-800 p-6 rounded-xl shadow-2xl text-3xl font-mono text-white"
       onClick={_ => setRunState(_ => #Running)}
@@ -2201,7 +2702,100 @@ let default = (props: props) => {
         }),
       )}
     </button>
-    <Keyboard t={#Ansi(ansi)} input setState nextText />
+    <Editor.Provider value=editor>
+      <Keyboard t={#Ansi(ansi)} input setState nextText />
+    </Editor.Provider>
+    {switch drag {
+    | Some(d) if d.moved =>
+      <Editor.Ghost at=d.at label={Ansi.labelsOf(ansi, d.code)->Option.getWithDefault([])} />
+    | _ => React.null
+    }}
+    {switch (draft, selected) {
+    | (Some(_), Some(code)) =>
+      let (base, shift) =
+        Ansi.labelsOf(ansi, code)->Option.map(Ansi.layers)->Option.getWithDefault(("", ""))
+      let also = c =>
+        Ansi.keycodes(ansi)
+        ->Array.find(((other, labels)) => {
+          let (b, s) = Ansi.layers(labels)
+          other != code && (b == c || s == c)
+        })
+        ->Option.map(fst)
+      <Editor.Panel
+        code
+        base
+        shift
+        also
+        onChange={(base, shift) =>
+          editDraft(d => {...d, board: Ansi.withKey(d.board, code, Ansi.labelsFor(base, shift))})}
+        onClose={() => setSelected(_ => None)}
+      />
+    | _ => React.null
+    }}
+    {importing
+      ? <Editor.Dialog title="Import layout" onClose={() => setImporting(_ => false)}>
+          <textarea
+            autoFocus=true
+            className="h-48 resize-none rounded bg-slate-900 p-3 text-xs text-slate-100 outline-none ring-1 ring-white/10 focus:ring-sky-400"
+            placeholder="Paste a layout"
+            value=importText
+            onChange={e => {
+              let text = ReactEvent.Form.target(e)["value"]
+              setImportText(_ => text)
+              setImportError(_ => None)
+            }}
+          />
+          {switch importError {
+          | Some(message) => <div className="text-red-300"> {React.string(message)} </div>
+          | None => React.null
+          }}
+          <div className="flex justify-end gap-2">
+            {button(~label="Cancel", ~onClick=() => setImporting(_ => false), ())}
+            {button(~label="Import", ~onClick=importLayout, ~disabled=importText->String.trim == "", ())}
+          </div>
+        </Editor.Dialog>
+      : React.null}
+    {switch exported {
+    | Some(json) =>
+      <Editor.Dialog
+        title="The clipboard isn't available here. Copy the layout below."
+        onClose={() => setExported(_ => None)}>
+        <textarea
+          autoFocus=true
+          readOnly=true
+          className="h-48 resize-none rounded bg-slate-900 p-3 text-xs text-slate-100 outline-none ring-1 ring-white/10"
+          value=json
+          onFocus={e => ReactEvent.Focus.target(e)["select"](.)}
+        />
+        <div className="flex justify-end">
+          {button(~label="Done", ~onClick=() => setExported(_ => None), ())}
+        </div>
+      </Editor.Dialog>
+    | None => React.null
+    }}
+    {switch confirming {
+    | Some((question, label, yes)) =>
+      let dismiss = () => setConfirming(_ => None)
+      <Editor.Dialog title=question onClose=dismiss>
+        <div className="flex justify-end gap-2">
+          {button(~label="Cancel", ~onClick=dismiss, ())}
+          <button
+            autoFocus=true
+            className="rounded bg-red-900/70 px-3 py-1 text-red-100 outline-none hover:bg-red-800 focus:ring-1 focus:ring-red-300"
+            onClick={_ => {
+              dismiss()
+              yes()
+            }}>
+            {React.string(label)}
+          </button>
+        </div>
+      </Editor.Dialog>
+    | None => React.null
+    }}
+    {switch toast {
+    | Some(message) => <Editor.Toast message />
+    | None => React.null
+    }}
     <Palette root=commands />
   </div>
 }
