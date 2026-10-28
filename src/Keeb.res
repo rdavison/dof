@@ -307,6 +307,62 @@ module Ansi = {
     right_shift: ["shift"],
   }
 
+  // Every character-bearing physical key, named by its KeyboardEvent code and
+  // paired with the labels a layout puts on it. The modifiers are left out:
+  // they carry no characters, so nothing can be typed on them.
+  let keycodes = (t: t) => [
+    ("Backquote", t.tilde),
+    ("Digit1", t.one),
+    ("Digit2", t.two),
+    ("Digit3", t.three),
+    ("Digit4", t.four),
+    ("Digit5", t.five),
+    ("Digit6", t.six),
+    ("Digit7", t.seven),
+    ("Digit8", t.eight),
+    ("Digit9", t.nine),
+    ("Digit0", t.zero),
+    ("Minus", t.hyphen),
+    ("Equal", t.equal),
+    ("KeyQ", t.q),
+    ("KeyW", t.w),
+    ("KeyE", t.e),
+    ("KeyR", t.r),
+    ("KeyT", t.t),
+    ("KeyY", t.y),
+    ("KeyU", t.u),
+    ("KeyI", t.i),
+    ("KeyO", t.o),
+    ("KeyP", t.p),
+    ("BracketLeft", t.open_bracket),
+    ("BracketRight", t.close_bracket),
+    ("Backslash", t.backslash),
+    ("KeyA", t.a),
+    ("KeyS", t.s),
+    ("KeyD", t.d),
+    ("KeyF", t.f),
+    ("KeyG", t.g),
+    ("KeyH", t.h),
+    ("KeyJ", t.j),
+    ("KeyK", t.k),
+    ("KeyL", t.l),
+    ("Semicolon", t.semicolon),
+    ("Quote", t.quote),
+    ("KeyZ", t.z),
+    ("KeyX", t.x),
+    ("KeyC", t.c),
+    ("KeyV", t.v),
+    ("KeyB", t.b),
+    ("KeyN", t.n),
+    ("KeyM", t.m),
+    ("Comma", t.comma),
+    ("Period", t.period),
+    ("Slash", t.slash),
+  ]
+
+  // Note: this predates the `graphite` record above and no longer agrees with
+  // it. Only `runText` still reads it; the live keyboard goes through the
+  // record, so derive from `keycodes` rather than from here.
   let graphite2Keycode = char =>
     switch char {
     | "`" | "~" => "Backquote"
@@ -500,8 +556,146 @@ let kcHF = keycode => {
   }
 }
 
-// Fading per-hand curves between consecutive keypresses within a word.
-// A word is a run of keypresses sharing the same active color.
+// Alternate fingerings recorded on /alt-fingerings, keyed by the physical key
+// run of a whole word. Where an entry exists it overrides the default finger
+// for every key in the word, so `judge` is fingered 4 3 7 8 3 rather than
+// resting both j and u on the left index.
+module Fingering = {
+  type entry = {
+    keys: array<string>,
+    status: string,
+    fingers: array<string>,
+  }
+
+  let code = hf =>
+    switch hf {
+    | (#l, #p) => "lp"
+    | (#l, #r) => "lr"
+    | (#l, #m) => "lm"
+    | (#l, #i) => "li"
+    | (#l, #t) => "lt"
+    | (#r, #i) => "ri"
+    | (#r, #m) => "rm"
+    | (#r, #r) => "rr"
+    | (#r, #p) => "rp"
+    | (#r, #t) => "rt"
+    }
+
+  let sigOf = keys => keys->Array.joinWith(" ")
+
+  // Which physical key carries a character, read off the record that draws the
+  // board. Ansi.graphite2Keycode is an older layout that no longer agrees.
+  let charKey = {
+    let d = Dict.make()
+    Ansi.keycodes(Ansi.graphite)->Array.forEach(((keycode, labels)) =>
+      labels->Array.forEach(label => {
+        let ch = label->String.toLowerCase
+        switch d->Dict.get(ch) {
+        | Some(_) => () // a character on two keys: the first one wins
+        | None => d->Dict.set(ch, keycode)
+        }
+      })
+    )
+    d
+  }
+
+  // Only "alt" entries carry a fingering; "none" means the default is the only
+  // way to type the word, which is what a lookup miss already yields.
+  let table: ref<Dict.t<array<string>>> = ref(Dict.make())
+
+  let install = entries => {
+    let d = Dict.make()
+    entries->Array.forEach(e =>
+      if e.status == "alt" && e.fingers->Array.length == e.keys->Array.length {
+        d->Dict.set(sigOf(e.keys), e.fingers)
+      }
+    )
+    table := d
+  }
+
+  let defaults = keys => keys->Array.map(k => code(kcHF(k)))
+
+  let forKeys = keys =>
+    switch table.contents->Dict.get(sigOf(keys)) {
+    | Some(fingers) => fingers
+    | None => defaults(keys)
+    }
+
+  // The word surrounding `offset` in `text`, as the review page tokenizes it:
+  // a run of [a-z'-] with leading and trailing apostrophes and hyphens dropped.
+  let isWordChar = ch => (ch >= "a" && ch <= "z") || ch == "'" || ch == "-"
+  let isEdge = ch => ch == "'" || ch == "-"
+
+  let charAt = (text, i) =>
+    i < 0 || i >= text->String.length ? "" : text->Js.String2.charAt(i)->String.toLowerCase
+
+  let wordAround = (text, offset) => {
+    if !isWordChar(charAt(text, offset)) {
+      None
+    } else {
+      let start = ref(offset)
+      while isWordChar(charAt(text, start.contents - 1)) {
+        start := start.contents - 1
+      }
+      let stop = ref(offset)
+      while isWordChar(charAt(text, stop.contents + 1)) {
+        stop := stop.contents + 1
+      }
+      while start.contents < stop.contents && isEdge(charAt(text, start.contents)) {
+        start := start.contents + 1
+      }
+      while stop.contents > start.contents && isEdge(charAt(text, stop.contents)) {
+        stop := stop.contents - 1
+      }
+      if offset < start.contents || offset > stop.contents {
+        None
+      } else {
+        let keys = []
+        for i in start.contents to stop.contents {
+          switch charKey->Dict.get(charAt(text, i)) {
+          | Some(keycode) => keys->Array.push(keycode)
+          | None => ()
+          }
+        }
+        keys->Array.length == stop.contents - start.contents + 1
+          ? Some(keys, offset - start.contents)
+          : None
+      }
+    }
+  }
+
+  // The finger that actually presses the key at `offset`, consulting the
+  // recorded fingering for the word it sits in.
+  let at = (text, offset, keycode) =>
+    switch wordAround(text, offset) {
+    | Some(keys, i) =>
+      switch forKeys(keys)->Array.get(i) {
+      | Some(f) => f
+      | None => code(kcHF(keycode))
+      }
+    | None => code(kcHF(keycode))
+    }
+}
+
+// SVG geometry the bindings don't cover.
+type svgElement = Dom.element
+type svgPoint = {x: float, y: float}
+type animation = Dom.animation
+@send external getTotalLength: svgElement => float = "getTotalLength"
+@send external getPointAtLength: (svgElement, float) => svgPoint = "getPointAtLength"
+@send external cancelAnimation: animation => unit = "cancel"
+
+// Per-word, per-hand orb trails.
+//
+// When a word comes up, each hand's keys in it are planned as one hidden path:
+// a point for one key, a pill for two, and for three or more a smooth curve
+// through every key in order. As the word is typed a glowing orb runs along
+// each hand's path and the trail fills in behind it, so the lit part is how
+// far through the word that hand has got.
+//
+// The trail fades whenever typing stops. Each keystroke in the word refills it
+// to full and starts the fade over, but once it has faded out it is gone: the
+// next key in the word starts a fresh trail from there.
 //
 // Same-finger events get a glass "bump" that swells and fades: a pill joining
 // the two keys, for a same-finger bigram (two different keys pressed back to
@@ -511,29 +705,70 @@ let kcHF = keycode => {
 module Trace = {
   module Dom = Webapi.Dom
 
-  // Trails are off so the same-finger bumps read on their own; flip to compare.
-  let showTrails = false
-  let fadeMs = 1000
+  // Set false to hide trails so the same-finger bumps read on their own.
+  let showTrails = true
+
+  let fadeMs = 500
   let bumpMs = 450
+  let traceMs = 150
+
+  // The trail is a glowing comet: brightest and widest at the orb, thinning to
+  // nothing some way back along the path. The tail reaches `tailReach` times the
+  // last hop, so it always stretches back past the previous key, and never
+  // less than `tailPx`. It is drawn as pieces about `piecePx` long so each can
+  // carry its own alpha.
+  let tailPx = 160.
+  let tailReach = 1.3
+  let piecePx = 6.
+  // alpha and width at the head of the comet, falling to nothing and to
+  // `tailWidth` at the end of the tail
+  let headOpacity = 0.95
+  let headWidth = 14.
+  let tailWidth = 2.
 
   let isAlpha = keycode =>
     switch keycode {
-    | "KeyQ" | "KeyW" | "KeyE" | "KeyR" | "KeyT" | "KeyY" | "KeyU" | "KeyI" | "KeyO" | "KeyP"
-    | "BracketLeft" | "BracketRight"
-    | "KeyA" | "KeyS" | "KeyD" | "KeyF" | "KeyG" | "KeyH" | "KeyJ" | "KeyK" | "KeyL"
-    | "Semicolon" | "Quote"
-    | "KeyZ" | "KeyX" | "KeyC" | "KeyV" | "KeyB" | "KeyN" | "KeyM"
-    | "Comma" | "Period" | "Slash" => true
+    | "KeyQ"
+    | "KeyW"
+    | "KeyE"
+    | "KeyR"
+    | "KeyT"
+    | "KeyY"
+    | "KeyU"
+    | "KeyI"
+    | "KeyO"
+    | "KeyP"
+    | "BracketLeft"
+    | "BracketRight"
+    | "KeyA"
+    | "KeyS"
+    | "KeyD"
+    | "KeyF"
+    | "KeyG"
+    | "KeyH"
+    | "KeyJ"
+    | "KeyK"
+    | "KeyL"
+    | "Semicolon"
+    | "Quote"
+    | "KeyZ"
+    | "KeyX"
+    | "KeyC"
+    | "KeyV"
+    | "KeyB"
+    | "KeyN"
+    | "KeyM"
+    | "Comma"
+    | "Period"
+    | "Slash" => true
     | _ => false
     }
 
   type color = [#red | #yellow1 | #green | #blue | #indigo | #white]
 
-  let wordColor: ref<option<color>> = ref(None)
-  let lastLeft = ref(None)
-  let lastRight = ref(None)
-  // the last two keypresses of any kind, newest first
-  let recent: ref<array<string>> = ref([])
+  // the most recent keypresses of any kind, newest first, with the finger
+  // that pressed each
+  let history: ref<array<(string, string)>> = ref([])
 
   let center = (element, origin) => {
     let r = element->Dom.Element.getBoundingClientRect
@@ -546,32 +781,326 @@ module Trace = {
 
   let byId = id => document->Dom.Document.getElementById(id)
 
-  let draw = (src, dst, color) => {
-    switch (byId("Traces"), byId(src), byId(dst)) {
-    | (Some(svg), Some(a), Some(b)) =>
-      let (x1, y1) = center(a, svg)
-      let (x2, y2) = center(b, svg)
-      // bow sideways so a->b and b->a don't overlap
-      let cx = (x1 +. x2) /. 2. -. (y2 -. y1) *. 0.2
-      let cy = (y1 +. y2) /. 2. +. (x2 -. x1) *. 0.2
-      let f = Float.toString
-      let path = document->Dom.Document.createElementNS("http://www.w3.org/2000/svg", "path")
-      path->Dom.Element.setAttribute("d", `M ${f(x1)} ${f(y1)} Q ${f(cx)} ${f(cy)} ${f(x2)} ${f(y2)}`)
-      path->Dom.Element.setAttribute("fill", "none")
-      path->Dom.Element.setAttribute("stroke", c(color))
-      path->Dom.Element.setAttribute("stroke-width", "6")
-      path->Dom.Element.setAttribute("stroke-linecap", "round")
-      svg->Dom.Element.appendChild(~child=path)
-      let timing = {
-        "duration": fadeMs,
-        "iterations": 1,
-        "easing": "ease-in",
-        "fill": "forwards",
+  let svg = tag => document->Dom.Document.createElementNS("http://www.w3.org/2000/svg", tag)
+
+  let isSpace = ch => ch == "" || ch == " " || ch == "\n"
+
+  // The word under the cursor, as (start, stop) offsets: the run of non-space
+  // characters holding the next character to type, or, once a word is typed
+  // out, the run holding the last one.
+  let wordAt = (text, offset) => {
+    let ch = i => Fingering.charAt(text, i)
+    let around = i => {
+      let start = ref(i)
+      while !isSpace(ch(start.contents - 1)) {
+        start := start.contents - 1
       }
-      let _ = path->Dom.Element.animate({"opacity": [0.9, 0.]}, timing)
-      let _ = setTimeout(() => path->Dom.Element.remove, fadeMs)
-    | _ => ()
+      let stop = ref(i)
+      while !isSpace(ch(stop.contents + 1)) {
+        stop := stop.contents + 1
+      }
+      (start.contents, stop.contents)
     }
+    if !isSpace(ch(offset + 1)) {
+      Some(around(offset + 1))
+    } else if !isSpace(ch(offset)) {
+      Some(around(offset))
+    } else {
+      None
+    }
+  }
+
+  // One hand's keys in a word, in typing order, with the offset each is typed
+  // at.
+  type plan = {keys: array<string>, offsets: array<int>}
+
+  // Split text[start..stop] by hand, using the recorded fingering for the
+  // word. A key pressed again straight away is the same stop on the path.
+  let planWord = (text, start, stop) => {
+    let left = {keys: [], offsets: []}
+    let right = {keys: [], offsets: []}
+    for i in start to stop {
+      switch Fingering.charKey->Dict.get(Fingering.charAt(text, i)) {
+      | Some(keycode) =>
+        let hand = Fingering.at(text, i, keycode)->Js.String2.charAt(0) == "l" ? left : right
+        if hand.keys->Array.get(hand.keys->Array.length - 1) != Some(keycode) {
+          hand.keys->Array.push(keycode)
+          hand.offsets->Array.push(i)
+        }
+      | None => ()
+      }
+    }
+    [left, right]
+  }
+
+  // Path segments through `points`: a Catmull-Rom spline written as cubic
+  // Béziers, so the curve passes through every point. With two points the
+  // controls fall on the line between them, which draws a straight pill.
+  let segments = points => {
+    let f = Float.toString
+    let n = points->Array.length
+    let p = i => points->Array.getUnsafe(Js.Math.max_int(0, Js.Math.min_int(n - 1, i)))
+    Array.fromInitializer(~length=Js.Math.max_int(0, n - 1), i => {
+      let (ax, ay) = p(i - 1)
+      let (bx, by) = p(i)
+      let (cx, cy) = p(i + 1)
+      let (dx, dy) = p(i + 2)
+      let c1x = bx +. (cx -. ax) /. 6.
+      let c1y = by +. (cy -. ay) /. 6.
+      let c2x = cx -. (dx -. bx) /. 6.
+      let c2y = cy -. (dy -. by) /. 6.
+      `C ${f(c1x)} ${f(c1y)} ${f(c2x)} ${f(c2y)} ${f(cx)} ${f(cy)}`
+    })
+  }
+
+  // One hand's trail for the word on screen.
+  type trail = {
+    offsets: array<int>,
+    // path length at each key; the path is None for a single key
+    lengths: array<float>,
+    path: option<svgElement>,
+    // the drawn trail, as (piece, start, end) lengths along the path
+    pieces: array<(svgElement, float, float)>,
+    orb: svgElement,
+    // keys reached so far, and how much of the path is drawn
+    mutable reached: int,
+    mutable drawn: float,
+    // how far back the tail reaches
+    mutable tail: float,
+    mutable frame: option<Webapi.rafId>,
+  }
+
+  type word = {
+    text: string,
+    // the word's span, and the offset its trail was planned from
+    start: int,
+    stop: int,
+    from: int,
+    group: svgElement,
+    trails: array<trail>,
+    // the last cursor offset seen, and whether anything has been typed yet
+    mutable seen: int,
+    mutable lit: bool,
+    mutable fading: option<animation>,
+    mutable timer: option<Js.Global.timeoutId>,
+    // faded out and removed
+    mutable gone: bool,
+  }
+
+  let current: ref<option<word>> = ref(None)
+
+  // The orb's and the trail's glows, defined once per board. The trail's
+  // region is in board units because a near-straight trail has almost no
+  // height for a bounding-box region to grow from.
+  let ensureGlow = board =>
+    if byId("orb-glow")->Option.isNone {
+      let defs = svg("defs")
+      defs->Dom.Element.setInnerHTML(
+        `<filter id="orb-glow" x="-3" y="-3" width="7" height="7">
+          <feGaussianBlur stdDeviation="6" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" /><feMergeNode in="blur" /><feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        <filter id="trail-glow" filterUnits="userSpaceOnUse" x="-100" y="-100" width="3000" height="2000">
+          <feGaussianBlur stdDeviation="4" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" /><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>`,
+      )
+      board->Dom.Element.appendChild(~child=defs)
+    }
+
+  let buildTrail = (board, group, plan, color) => {
+    let points = plan.keys->Array.filterMap(k => byId(k)->Option.map(key => center(key, board)))
+    switch points->Array.get(0) {
+    | Some((x0, y0)) if points->Array.length == plan.keys->Array.length =>
+      let f = Float.toString
+      let move = `M ${f(x0)} ${f(y0)}`
+      let segs = segments(points)
+      let (path, lengths, pieces) = if segs->Array.length == 0 {
+        (None, [0.], [])
+      } else {
+        // an unstroked copy of the path, for measuring and for placing the orb
+        let path = svg("path")
+        path->Dom.Element.setAttribute("fill", "none")
+        group->Dom.Element.appendChild(~child=path)
+        // measure the length up to each key on the way to the full path
+        let lengths = Array.fromInitializer(~length=points->Array.length, i => {
+          let d = [move]->Array.concat(segs->Array.slice(~start=0, ~end=i))->Array.joinWith(" ")
+          path->Dom.Element.setAttribute("d", d)
+          path->getTotalLength
+        })
+        let total = lengths->Array.getUnsafe(lengths->Array.length - 1)
+        let d = [move]->Array.concat(segs)->Array.joinWith(" ")
+        // butt-capped pieces of the same curve, end to end, hidden until
+        // reached, glowing as one
+        let tail = svg("g")
+        tail->Dom.Element.setAttribute("filter", "url(#trail-glow)")
+        group->Dom.Element.appendChild(~child=tail)
+        let n = Js.Math.max_int(1, Js.Math.ceil_int(total /. piecePx))
+        let pieces = Array.fromInitializer(~length=n, i => {
+          let piece = svg("path")
+          piece->Dom.Element.setAttribute("d", d)
+          piece->Dom.Element.setAttribute("fill", "none")
+          piece->Dom.Element.setAttribute("stroke", c(color))
+          piece->Dom.Element.setAttribute("stroke-opacity", "0")
+          tail->Dom.Element.appendChild(~child=piece)
+          let step = total /. Float.fromInt(n)
+          (piece, step *. Float.fromInt(i), step *. Float.fromInt(i + 1))
+        })
+        (Some(path), lengths, pieces)
+      }
+      // the head: a coloured ball, wider than the trail, around a white-hot core
+      let orb = svg("g")
+      orb->Dom.Element.setAttribute("transform", `translate(${f(x0)} ${f(y0)})`)
+      orb->Dom.Element.setAttribute("filter", "url(#orb-glow)")
+      orb->Dom.Element.setAttribute("opacity", "0")
+      let ball = svg("circle")
+      ball->Dom.Element.setAttribute("r", "11")
+      ball->Dom.Element.setAttribute("fill", c(color))
+      orb->Dom.Element.appendChild(~child=ball)
+      let core = svg("circle")
+      core->Dom.Element.setAttribute("r", "5")
+      core->Dom.Element.setAttribute("fill", "white")
+      orb->Dom.Element.appendChild(~child=core)
+      group->Dom.Element.appendChild(~child=orb)
+      Some({offsets: plan.offsets, lengths, path, pieces, orb, reached: 0, drawn: 0., tail: tailPx, frame: None})
+    | _ => None
+    }
+  }
+
+  let build = (text, start, stop, ~from, color) =>
+    byId("Traces")->Option.map(board => {
+      ensureGlow(board)
+      let group = svg("g")
+      board->Dom.Element.appendChild(~child=group)
+      let trails =
+        planWord(text, from, stop)->Array.filterMap(plan => buildTrail(board, group, plan, color))
+      {
+        text,
+        start,
+        stop,
+        from,
+        group,
+        trails,
+        seen: -1,
+        lit: false,
+        fading: None,
+        timer: None,
+        gone: false,
+      }
+    })
+
+  // Draw `t` up to `len` along its path, with the orb at the tip and the
+  // trail fading out behind it.
+  let place = (t, len) => {
+    t.drawn = len
+    switch t.path {
+    | Some(path) =>
+      let f = Float.toString
+      let total = t.lengths->Array.getUnsafe(t.lengths->Array.length - 1)
+      t.pieces->Array.forEach(((piece, a, b)) => {
+        let shown = Js.Math.min_float(b, len) -. a
+        if shown <= 0. {
+          piece->Dom.Element.setAttribute("stroke-opacity", "0")
+        } else {
+          // a dash covering [a, a + shown] of the path
+          piece->Dom.Element.setAttribute("stroke-dasharray", `0 ${f(a)} ${f(shown)} ${f(total)}`)
+          // 1 at the head, 0 at the end of the tail
+          let k = Js.Math.max_float(0., 1. -. (len -. (a +. shown)) /. t.tail)
+          piece->Dom.Element.setAttribute("stroke-opacity", f(headOpacity *. k))
+          piece->Dom.Element.setAttribute("stroke-width", f(tailWidth +. (headWidth -. tailWidth) *. k))
+        }
+      })
+      let {x, y} = path->getPointAtLength(len)
+      t.orb->Dom.Element.setAttribute("transform", `translate(${f(x)} ${f(y)})`)
+    | None => ()
+    }
+  }
+
+  // Run the orb to the `reached`th key (1-based; 0 hides it), easing out.
+  let goto = (t, reached) =>
+    if reached != t.reached {
+      t.reached = reached
+      t.frame->Option.forEach(Webapi.cancelAnimationFrame)
+      t.frame = None
+      t.orb->Dom.Element.setAttribute("opacity", reached == 0 ? "0" : "1")
+      let target = reached == 0 ? 0. : t.lengths->Array.getUnsafe(reached - 1)
+      let hop = reached < 2 ? 0. : target -. t.lengths->Array.getUnsafe(reached - 2)
+      t.tail = Js.Math.max_float(tailPx, hop *. tailReach)
+      let from = t.drawn
+      let began = ref(None)
+      let rec step = now => {
+        let t0 = switch began.contents {
+        | Some(t0) => t0
+        | None =>
+          began := Some(now)
+          now
+        }
+        let k = Js.Math.min_float(1., (now -. t0) /. Float.fromInt(traceMs))
+        let eased = 1. -. Js.Math.pow_float(~base=1. -. k, ~exp=3.)
+        place(t, from +. (target -. from) *. eased)
+        t.frame = k < 1. ? Some(Webapi.requestCancellableAnimationFrame(step)) : None
+      }
+      if reached == 0 {
+        place(t, 0.)
+      } else {
+        t.frame = Some(Webapi.requestCancellableAnimationFrame(step))
+      }
+    }
+
+  // A keystroke: bring the word back to full and start its fade over. If the
+  // fade runs out, the word is gone.
+  let refill = w => {
+    w.lit = true
+    w.fading->Option.forEach(cancelAnimation)
+    w.timer->Option.forEach(Js.Global.clearTimeout)
+    let timing = {
+      "duration": fadeMs,
+      "iterations": 1,
+      "easing": "ease-in",
+      "fill": "forwards",
+    }
+    w.fading = Some(w.group->Dom.Element.animate({"opacity": [1., 0.]}, timing))
+    w.timer = Some(
+      Js.Global.setTimeout(() => {
+        w.group->Dom.Element.remove
+        w.gone = true
+      }, fadeMs),
+    )
+  }
+
+  // Bring the trails in line with the cursor: `offset` is the last character
+  // typed in `text`, and `color` the colour of the word it is in.
+  let sync = (~text, ~offset, ~color) => {
+    switch (current.contents, wordAt(text, offset)) {
+    | (Some(w), Some((start, stop))) if w.text == text && w.start == start && w.stop == stop =>
+      if w.gone && offset != w.seen {
+        // faded out mid-word: a fresh trail from the key just typed
+        let from = Js.Math.max_int(start, offset)
+        current := build(text, start, stop, ~from, color)
+      }
+    | (old, span) =>
+      // a word left behind keeps fading from its last keystroke
+      old->Option.forEach(w =>
+        if !w.lit {
+          w.group->Dom.Element.remove
+        }
+      )
+      current := span->Option.flatMap(((start, stop)) => build(text, start, stop, ~from=start, color))
+    }
+    current.contents->Option.forEach(w => {
+      w.trails->Array.forEach(t => goto(t, t.offsets->Array.filter(o => o <= offset)->Array.length))
+      if offset != w.seen {
+        w.seen = offset
+        if offset >= w.from {
+          refill(w)
+        }
+      }
+    })
   }
 
   // How a pane reads: `Glow` lights up, `Flash` lights up harder (the key a
@@ -682,45 +1211,31 @@ module Trace = {
     }
   }
 
-  let sameFinger = (a, b) => a != b && isAlpha(a) && kcHF(a) == kcHF(b)
+  // Two different keys pressed by one finger. Fingers are two-letter codes from
+  // `Fingering.at`, so a word's recorded alternate fingering counts.
+  let sameFinger = ((a, fingerA), (b, fingerB)) => a != b && isAlpha(a) && fingerA == fingerB
 
   let reset = () => {
-    wordColor := None
-    lastLeft := None
-    lastRight := None
-    recent := []
+    history := []
   }
 
-  let press = (keycode, color: color) => {
-    if wordColor.contents != Some(color) {
-      wordColor := Some(color)
-      lastLeft := None
-      lastRight := None
-    }
+  // `finger` is the two-letter code of the finger that really presses this key,
+  // which is the default for the key unless the word has a recorded alternate.
+  let press = (keycode, color: color, ~finger) => {
+    let key = (keycode, finger)
     if isAlpha(keycode) {
-      switch recent.contents->Array.get(0) {
-      | Some(prev) if sameFinger(prev, keycode) =>
+      switch history.contents->Array.get(0) {
+      | Some((prev, _) as p) if sameFinger(p, key) =>
         bumpLine(~look=Glow, prev, keycode, color)
         bumpKey(keycode, color)
       | _ => ()
       }
-      switch recent.contents->Array.get(1) {
-      | Some(src) if sameFinger(src, keycode) => bumpLine(~look=Shadow, src, keycode, color)
+      switch history.contents->Array.get(1) {
+      | Some((src, _) as s) if sameFinger(s, key) => bumpLine(~look=Shadow, src, keycode, color)
       | _ => ()
       }
     }
-    recent := [keycode]->Array.concat(recent.contents->Array.slice(~start=0, ~end=1))
-    if isAlpha(keycode) {
-      let last = switch kcHF(keycode) {
-      | (#l, _) => lastLeft
-      | (#r, _) => lastRight
-      }
-      switch last.contents {
-      | Some(src) if showTrails && src != keycode => draw(src, keycode, color)
-      | _ => ()
-      }
-      last := Some(keycode)
-    }
+    history := [key]->Array.concat(history.contents->Array.slice(~start=0, ~end=1))
   }
 }
 
@@ -976,7 +1491,7 @@ module Keyboard = {
             color
           }
           sim(kc, color)
-          Trace.press(kc, color)
+          Trace.press(kc, color, ~finger=Fingering.at(text, offset, kc))
           (i + 1, text, color, #white)
         } else {
           (i + 1, text, color, #red)
@@ -1086,167 +1601,200 @@ module Keyboard = {
     "ArrowRight",
   ]
 
+  // The bare ANSI key grid, with the overlay svg the Trace module draws into.
+  // Anything extra goes in as children, positioned against the same wrapper.
+  module Grid = {
+    @react.component
+    let make = (~t: t, ~children: React.element=React.null) =>
+      switch t {
+      | #Ansi({
+          tilde,
+          one,
+          two,
+          three,
+          four,
+          five,
+          six,
+          seven,
+          eight,
+          nine,
+          zero,
+          hyphen,
+          equal,
+          backspace,
+          tab,
+          q,
+          w,
+          e,
+          r,
+          t,
+          y,
+          u,
+          i,
+          o,
+          p,
+          open_bracket,
+          close_bracket,
+          backslash,
+          caps_lock,
+          a,
+          s,
+          d,
+          f,
+          g,
+          h,
+          j,
+          k,
+          l,
+          semicolon,
+          quote,
+          enter,
+          left_shift,
+          z,
+          x,
+          c,
+          v,
+          b,
+          n,
+          m,
+          comma,
+          period,
+          slash,
+          right_shift,
+        }) =>
+        <div className="relative p-[6px] bg-slate-700 rounded-2xl shadow-lg shadow-black">
+          <div className="flex flex-col">
+            <div className="flex flex-row">
+              <Key id="Escape" label={["esc"]} shape={#_1_5} />
+              <Key id="F1" label={["F1"]} shape={#_1} />
+              <Key id="F2" label={["F2"]} shape={#_1} />
+              <Key id="F3" label={["F3"]} shape={#_1} />
+              <Key id="F4" label={["F4"]} shape={#_1} />
+              <Key id="F5" label={["F5"]} shape={#_1} />
+              <Key id="F6" label={["F6"]} shape={#_1} />
+              <Key id="F7" label={["F7"]} shape={#_1} />
+              <Key id="F8" label={["F8"]} shape={#_1} />
+              <Key id="F9" label={["F9"]} shape={#_1} />
+              <Key id="F10" label={["F10"]} shape={#_1} />
+              <Key id="F11" label={["F11"]} shape={#_1} />
+              <Key id="F12" label={["F12"]} shape={#_1} />
+              <Key.Power />
+            </div>
+            <div className="flex flex-row">
+              <Key id="Backquote" label={tilde} shape={#_1} />
+              <Key id="Digit1" label={one} shape={#_1} />
+              <Key id="Digit2" label={two} shape={#_1} />
+              <Key id="Digit3" label={three} shape={#_1} />
+              <Key id="Digit4" label={four} shape={#_1} />
+              <Key id="Digit5" label={five} shape={#_1} />
+              <Key id="Digit6" label={six} shape={#_1} />
+              <Key id="Digit7" label={seven} shape={#_1} />
+              <Key id="Digit8" label={eight} shape={#_1} />
+              <Key id="Digit9" label={nine} shape={#_1} />
+              <Key id="Digit0" label={zero} shape={#_1} />
+              <Key id="Minus" label={hyphen} shape={#_1} />
+              <Key id="Equal" label={equal} shape={#_1} />
+              <Key id="Backspace" label={backspace} shape={#_1_5} />
+            </div>
+            <div className="flex flex-row">
+              <Key id="Tab" label={tab} shape={#_1_5} />
+              <Key id="KeyQ" label={q} shape={#_1} />
+              <Key id="KeyW" label={w} shape={#_1} />
+              <Key id="KeyE" label={e} shape={#_1} />
+              <Key id="KeyR" label={r} shape={#_1} />
+              <Key id="KeyT" label={t} shape={#_1} />
+              <Key id="KeyY" label={y} shape={#_1} />
+              <Key id="KeyU" label={u} shape={#_1} />
+              <Key id="KeyI" label={i} shape={#_1} />
+              <Key id="KeyO" label={o} shape={#_1} />
+              <Key id="KeyP" label={p} shape={#_1} />
+              <Key id="BracketLeft" label={open_bracket} shape={#_1} />
+              <Key id="BracketRight" label={close_bracket} shape={#_1} />
+              <Key id="Backslash" label={backslash} shape={#_1} />
+            </div>
+            <div className="flex flex-row">
+              <Key id="ControlRight" label={caps_lock} shape={#_1_75} />
+              <Key id="KeyA" label={a} shape={#_1} />
+              <Key id="KeyS" label={s} shape={#_1} />
+              <Key id="KeyD" label={d} shape={#_1} />
+              <Key id="KeyF" label={f} shape={#_1} />
+              <Key id="KeyG" label={g} shape={#_1} />
+              <Key id="KeyH" label={h} shape={#_1} />
+              <Key id="KeyJ" label={j} shape={#_1} />
+              <Key id="KeyK" label={k} shape={#_1} />
+              <Key id="KeyL" label={l} shape={#_1} />
+              <Key id="Semicolon" label={semicolon} shape={#_1} />
+              <Key id="Quote" label={quote} shape={#_1} />
+              <Key id="Enter" label={enter} shape={#_1_75} />
+            </div>
+            <div className="flex flex-row">
+              <Key id="ShiftLeft" label={left_shift} shape={#_2_25} />
+              <Key id="KeyZ" label={z} shape={#_1} />
+              <Key id="KeyX" label={x} shape={#_1} />
+              <Key id="KeyC" label={c} shape={#_1} />
+              <Key id="KeyV" label={v} shape={#_1} />
+              <Key id="KeyB" label={b} shape={#_1} />
+              <Key id="KeyN" label={n} shape={#_1} />
+              <Key id="KeyM" label={m} shape={#_1} />
+              <Key id="Comma" label={comma} shape={#_1} />
+              <Key id="Period" label={period} shape={#_1} />
+              <Key id="Slash" label={slash} shape={#_1} />
+              <Key id="ShiftRight" label={right_shift} shape={#_2_25} />
+            </div>
+            <div className="flex flex-row">
+              <Key label={["fn"]} shape={#_1} />
+              <Key id="ControlLeft" label={["^"]} shape={#_1} />
+              <Key id="AltLeft" label={["⌥"]} shape={#_1} />
+              <Key id="OSLeft" label={["⌘"]} shape={#_1_25} />
+              <Key id="Space" label={[""]} shape={#_5} />
+              <Key id="OSRight" label={["⌘"]} shape={#_1_25} />
+              <Key id="AltRight" label={["⌥"]} shape={#_1} />
+              <Key.Nav />
+            </div>
+          </div>
+          <svg id="Traces" className="absolute inset-0 w-full h-full pointer-events-none" />
+          <div id="Bumps" className="absolute inset-0 pointer-events-none" />
+          children
+        </div>
+      }
+  }
+
   @react.component
   let make = (~t: t, ~setState, ~nextText) => {
     useListener(t, ~setState, ~nextText)
-    switch t {
-    | #Ansi({
-        tilde,
-        one,
-        two,
-        three,
-        four,
-        five,
-        six,
-        seven,
-        eight,
-        nine,
-        zero,
-        hyphen,
-        equal,
-        backspace,
-        tab,
-        q,
-        w,
-        e,
-        r,
-        t,
-        y,
-        u,
-        i,
-        o,
-        p,
-        open_bracket,
-        close_bracket,
-        backslash,
-        caps_lock,
-        a,
-        s,
-        d,
-        f,
-        g,
-        h,
-        j,
-        k,
-        l,
-        semicolon,
-        quote,
-        enter,
-        left_shift,
-        z,
-        x,
-        c,
-        v,
-        b,
-        n,
-        m,
-        comma,
-        period,
-        slash,
-        right_shift,
-      }) =>
-      <div className="relative p-[6px] bg-slate-700 rounded-2xl shadow-lg shadow-black">
-        <div className="flex flex-col">
-          <div className="flex flex-row">
-            <Key id="Escape" label={["esc"]} shape={#_1_5} />
-            <Key id="F1" label={["F1"]} shape={#_1} />
-            <Key id="F2" label={["F2"]} shape={#_1} />
-            <Key id="F3" label={["F3"]} shape={#_1} />
-            <Key id="F4" label={["F4"]} shape={#_1} />
-            <Key id="F5" label={["F5"]} shape={#_1} />
-            <Key id="F6" label={["F6"]} shape={#_1} />
-            <Key id="F7" label={["F7"]} shape={#_1} />
-            <Key id="F8" label={["F8"]} shape={#_1} />
-            <Key id="F9" label={["F9"]} shape={#_1} />
-            <Key id="F10" label={["F10"]} shape={#_1} />
-            <Key id="F11" label={["F11"]} shape={#_1} />
-            <Key id="F12" label={["F12"]} shape={#_1} />
-            <Key.Power />
-          </div>
-          <div className="flex flex-row">
-            <Key id="Backquote" label={tilde} shape={#_1} />
-            <Key id="Digit1" label={one} shape={#_1} />
-            <Key id="Digit2" label={two} shape={#_1} />
-            <Key id="Digit3" label={three} shape={#_1} />
-            <Key id="Digit4" label={four} shape={#_1} />
-            <Key id="Digit5" label={five} shape={#_1} />
-            <Key id="Digit6" label={six} shape={#_1} />
-            <Key id="Digit7" label={seven} shape={#_1} />
-            <Key id="Digit8" label={eight} shape={#_1} />
-            <Key id="Digit9" label={nine} shape={#_1} />
-            <Key id="Digit0" label={zero} shape={#_1} />
-            <Key id="Minus" label={hyphen} shape={#_1} />
-            <Key id="Equal" label={equal} shape={#_1} />
-            <Key id="Backspace" label={backspace} shape={#_1_5} />
-          </div>
-          <div className="flex flex-row">
-            <Key id="Tab" label={tab} shape={#_1_5} />
-            <Key id="KeyQ" label={q} shape={#_1} />
-            <Key id="KeyW" label={w} shape={#_1} />
-            <Key id="KeyE" label={e} shape={#_1} />
-            <Key id="KeyR" label={r} shape={#_1} />
-            <Key id="KeyT" label={t} shape={#_1} />
-            <Key id="KeyY" label={y} shape={#_1} />
-            <Key id="KeyU" label={u} shape={#_1} />
-            <Key id="KeyI" label={i} shape={#_1} />
-            <Key id="KeyO" label={o} shape={#_1} />
-            <Key id="KeyP" label={p} shape={#_1} />
-            <Key id="BracketLeft" label={open_bracket} shape={#_1} />
-            <Key id="BracketRight" label={close_bracket} shape={#_1} />
-            <Key id="Backslash" label={backslash} shape={#_1} />
-          </div>
-          <div className="flex flex-row">
-            <Key id="ControlRight" label={caps_lock} shape={#_1_75} />
-            <Key id="KeyA" label={a} shape={#_1} />
-            <Key id="KeyS" label={s} shape={#_1} />
-            <Key id="KeyD" label={d} shape={#_1} />
-            <Key id="KeyF" label={f} shape={#_1} />
-            <Key id="KeyG" label={g} shape={#_1} />
-            <Key id="KeyH" label={h} shape={#_1} />
-            <Key id="KeyJ" label={j} shape={#_1} />
-            <Key id="KeyK" label={k} shape={#_1} />
-            <Key id="KeyL" label={l} shape={#_1} />
-            <Key id="Semicolon" label={semicolon} shape={#_1} />
-            <Key id="Quote" label={quote} shape={#_1} />
-            <Key id="Enter" label={enter} shape={#_1_75} />
-          </div>
-          <div className="flex flex-row">
-            <Key id="ShiftLeft" label={left_shift} shape={#_2_25} />
-            <Key id="KeyZ" label={z} shape={#_1} />
-            <Key id="KeyX" label={x} shape={#_1} />
-            <Key id="KeyC" label={c} shape={#_1} />
-            <Key id="KeyV" label={v} shape={#_1} />
-            <Key id="KeyB" label={b} shape={#_1} />
-            <Key id="KeyN" label={n} shape={#_1} />
-            <Key id="KeyM" label={m} shape={#_1} />
-            <Key id="Comma" label={comma} shape={#_1} />
-            <Key id="Period" label={period} shape={#_1} />
-            <Key id="Slash" label={slash} shape={#_1} />
-            <Key id="ShiftRight" label={right_shift} shape={#_2_25} />
-          </div>
-          <div className="flex flex-row">
-            <Key label={["fn"]} shape={#_1} />
-            <Key id="ControlLeft" label={["^"]} shape={#_1} />
-            <Key id="AltLeft" label={["⌥"]} shape={#_1} />
-            <Key id="OSLeft" label={["⌘"]} shape={#_1_25} />
-            <Key id="Space" label={[""]} shape={#_5} />
-            <Key id="OSRight" label={["⌘"]} shape={#_1_25} />
-            <Key id="AltRight" label={["⌥"]} shape={#_1} />
-            <Key.Nav />
-          </div>
-        </div>
-        <svg id="Traces" className="absolute inset-0 w-full h-full pointer-events-none" />
-        <div id="Bumps" className="absolute inset-0 pointer-events-none" />
-      </div>
-    }
+    <Grid t />
   }
 }
 
-type props = {corpus: corpus}
+type fingeringFile = {
+  version: int,
+  entries: array<Fingering.entry>,
+}
+
+@scope("JSON") @val external parseFingerings: string => fingeringFile = "parse"
+
+type props = {
+  corpus: corpus,
+  fingerings: array<Fingering.entry>,
+}
 
 let getStaticProps: Next.GetStaticProps.t<props, 'params, 'previewData> = _context => {
   let data = Node.Fs.readFileAsUtf8Sync("corpus/english.json")
-  let props = {corpus: parseCorpus(data)}
+  // A missing or unreadable file just means every word is fingered by default.
+  // Rebuilt field by field: the parsed objects also carry the review page's
+  // words, legends and notes, which would double this page's payload.
+  let fingerings = try {
+    parseFingerings(Node.Fs.readFileAsUtf8Sync("data/alt-fingerings.json")).entries
+    ->Array.filter((e: Fingering.entry) => e.status == "alt")
+    ->Array.map((e: Fingering.entry) => {
+      Fingering.keys: e.keys,
+      status: e.status,
+      fingers: e.fingers,
+    })
+  } catch {
+  | _ => []
+  }
+  let props = {corpus: parseCorpus(data), fingerings}
   Js.Promise.resolve({"props": props})
 }
 
@@ -1270,6 +1818,20 @@ let default = (props: props) => {
 
   let (runState, setRunState) = React.useState(() => #Init)
   let ansi = Ansi.graphite
+
+  // The table is read inside keypress handlers, so it only has to be in place
+  // before the first one; an effect keeps it off the server render path.
+  React.useEffect1(() => {
+    Fingering.install(props.fingerings)
+    None
+  }, [props.fingerings])
+
+  React.useEffect3(() => {
+    if Trace.showTrails {
+      Trace.sync(~text, ~offset, ~color)
+    }
+    None
+  }, (text, offset, color))
 
   // React.useEffect1(() => {
   //   switch runState {
