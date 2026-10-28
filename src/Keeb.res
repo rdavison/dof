@@ -677,10 +677,12 @@ let kcHF = keycode => {
   }
 }
 
-// Alternate fingerings recorded on /alt-fingerings, keyed by the physical key
-// run of a whole word. Where an entry exists it overrides the default finger
-// for every key in the word, so `judge` is fingered 4 3 7 8 3 rather than
-// resting both j and u on the left index.
+// Which finger presses each key. A fingermap profile starts from every key's
+// default finger (`kcHF`); the stronglytyped profile adds the alternate
+// fingerings recorded on /alt-fingerings, keyed by the physical key run of a
+// whole word. Where an entry exists it overrides the default finger for every
+// key in the word, so `judge` is fingered 4 3 7 8 3 rather than resting both
+// j and u on the left index.
 module Fingering = {
   type entry = {
     keys: array<string>,
@@ -741,8 +743,25 @@ module Fingering = {
 
   let defaults = keys => keys->Array.map(k => code(kcHF(k)))
 
+  type profile = {
+    id: string,
+    name: string,
+    // whether the recorded alternate fingerings apply
+    alternates: bool,
+  }
+
+  let profiles = [
+    {id: "stronglytyped", name: "stronglytyped", alternates: true},
+    {id: "standard", name: "standard", alternates: false},
+  ]
+
+  // The profile in use.
+  let profile = ref(profiles->Array.getUnsafe(0))
+
+  let setProfile = id => profiles->Array.find(p => p.id == id)->Option.forEach(p => profile := p)
+
   let forKeys = keys =>
-    switch table.contents->Dict.get(sigOf(keys)) {
+    switch profile.contents.alternates ? table.contents->Dict.get(sigOf(keys)) : None {
     | Some(fingers) => fingers
     | None => defaults(keys)
     }
@@ -2001,6 +2020,12 @@ let default = (props: props) => {
   let ansi = layout.board
 
   let (input, setInput) = React.useState(() => Keyboard.Translate)
+
+  let (profileId, setProfileId) = React.useState(() => "stronglytyped")
+  let profile =
+    Fingering.profiles
+    ->Array.find(p => p.id == profileId)
+    ->Option.getWithDefault(Fingering.profiles->Array.getUnsafe(0))
   let inputName = input =>
     switch input {
     | Keyboard.Translate => "Translate"
@@ -2031,6 +2056,10 @@ let default = (props: props) => {
     | Some("Passthru") => setInput(_ => Passthru)
     | _ => ()
     }
+    switch remembered("fingermap") {
+    | Some(id) if Fingering.profiles->Array.some(p => p.id == id) => setProfileId(_ => id)
+    | _ => ()
+    }
     None
   })
 
@@ -2046,6 +2075,14 @@ let default = (props: props) => {
     remember("input", inputName(input))
     None
   }, [input])
+
+  // Trails and bumps ask the profile which finger presses each key.
+  React.useEffect1(() => {
+    Fingering.setProfile(profileId)
+    Trace.forget()
+    remember("fingermap", profileId)
+    None
+  }, [profileId])
 
   let commands: Palette.page = {
     title: "Commands",
@@ -2089,6 +2126,23 @@ let default = (props: props) => {
           ],
         }),
       },
+      {
+        label: "Choose fingermap…",
+        hint: profile.name,
+        checked: false,
+        action: Open({
+          title: "Fingermap",
+          placeholder: "Choose a fingermap…",
+          items: Fingering.profiles->Array.map(p => {
+            Palette.label: p.name,
+            hint: p.alternates
+              ? "default fingers plus recorded alternates"
+              : "default finger for every key",
+            checked: p.id == profileId,
+            action: Run(() => setProfileId(_ => p.id)),
+          }),
+        }),
+      },
     ],
   }
 
@@ -2099,12 +2153,12 @@ let default = (props: props) => {
     None
   }, [props.fingerings])
 
-  React.useEffect4(() => {
+  React.useEffect5(() => {
     if Trace.showTrails {
       Trace.sync(~text, ~offset, ~color)
     }
     None
-  }, (text, offset, color, layoutId))
+  }, (text, offset, color, layoutId, profileId))
 
   // React.useEffect1(() => {
   //   switch runState {
@@ -2118,7 +2172,11 @@ let default = (props: props) => {
 
   <div className="flex bg-b flex-col gap-8 w-[942px]">
     <div className="flex justify-end gap-3 font-mono text-sm text-slate-700">
-      <span> {React.string(layout.name ++ " · " ++ inputName(input)->String.toLowerCase)} </span>
+      <span>
+        {React.string(
+          [layout.name, inputName(input)->String.toLowerCase, profile.name]->Array.joinWith(" · "),
+        )}
+      </span>
       <span className="text-slate-600"> {React.string("⌘K for commands")} </span>
     </div>
     <button
