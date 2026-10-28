@@ -146,10 +146,19 @@ module Key = {
       } ++ (e.source == Some(id) ? " opacity-30" : "")
     | None => ""
     }
+    // A fill paints over the key's own colours, such as its finger's colour in
+    // the fingermap editor.
+    let fill = switch React.useContext(Editor.context) {
+    | Some(e) => e.fill(id)
+    | None => None
+    }
     let key =
       <div
         id
         className={`${shape} m-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex${editing}`}
+        style=?{fill->Option.map(backgroundColor =>
+          ReactDOM.Style.make(~backgroundColor, ~color="rgb(15 23 42)", ())
+        )}
         onPointerDown=?{edit->Option.map(e => ev => e.onPointerDown(id, ev))}>
         <div className="m-auto"> {label} </div>
       </div>
@@ -781,94 +790,12 @@ let runKeycode = (keycode, color) => {
   }
 }
 
-let kcHF = keycode => {
-  switch keycode {
-  | "Escape" => (#l, #r)
-  | "F1" => (#l, #r)
-  | "F2" => (#l, #m)
-  | "F3" => (#l, #m)
-  | "F4" => (#l, #i)
-  | "F5" => (#l, #i)
-  | "F6" => (#r, #i)
-  | "F7" => (#r, #i)
-  | "F8" => (#r, #m)
-  | "F9" => (#r, #r)
-  | "F10" => (#r, #i)
-  | "F11" => (#r, #m)
-  | "F12" => (#r, #r)
-  | "Tab" => (#l, #p)
-  | "Backquote" => (#l, #r)
-  | "Digit1" => (#l, #r)
-  | "Digit2" => (#l, #r)
-  | "Digit3" => (#l, #m)
-  | "Digit4" => (#l, #i)
-  | "Digit5" => (#l, #i)
-  | "Digit6" => (#r, #i)
-  | "Digit7" => (#r, #i)
-  | "Digit8" => (#r, #m)
-  | "Digit9" => (#r, #m)
-  | "Digit0" => (#r, #p)
-  | "Minus" => (#r, #m)
-  | "Equal" => (#r, #r)
-  | "Backspace" => (#r, #r)
-  | "KeyQ" => (#l, #p)
-  | "KeyW" => (#l, #r)
-  | "KeyE" => (#l, #m)
-  | "KeyR" => (#l, #i)
-  | "KeyT" => (#l, #i)
-  | "KeyY" => (#r, #i)
-  | "KeyU" => (#r, #i)
-  | "KeyI" => (#r, #m)
-  | "KeyO" => (#r, #r)
-  | "KeyP" => (#r, #p)
-  | "BracketLeft" => (#r, #p)
-  | "BracketRight" => (#r, #p)
-  | "Backslash" => (#r, #p)
-  | "ControlRight" => (#l, #p)
-  | "KeyA" => (#l, #p)
-  | "KeyS" => (#l, #r)
-  | "KeyD" => (#l, #m)
-  | "KeyF" => (#l, #i)
-  | "KeyG" => (#l, #i)
-  | "KeyH" => (#r, #i)
-  | "KeyJ" => (#r, #i)
-  | "KeyK" => (#r, #m)
-  | "KeyL" => (#r, #r)
-  | "Semicolon" => (#r, #p)
-  | "Quote" => (#r, #p)
-  | "Enter" => (#r, #p)
-  | "ShiftLeft" => (#l, #p)
-  | "KeyZ" => (#l, #p)
-  | "KeyX" => (#l, #r)
-  | "KeyC" => (#l, #m)
-  | "KeyV" => (#l, #i)
-  | "KeyB" => (#l, #i)
-  | "KeyN" => (#r, #i)
-  | "KeyM" => (#r, #i)
-  | "Comma" => (#r, #m)
-  | "Period" => (#r, #r)
-  | "Slash" => (#r, #p)
-  | "ShiftRight" => (#r, #p)
-  | "ControlLeft" => (#l, #p)
-  | "AltLeft" => (#l, #t)
-  | "OSLeft" => (#l, #t)
-  | "Space" => (#r, #t)
-  | "OSRight" => (#r, #t)
-  | "AltRight" => (#r, #t)
-  | "ArrowUp" => (#r, #m)
-  | "ArrowLeft" => (#r, #i)
-  | "ArrowDown" => (#r, #m)
-  | "ArrowRight" => (#r, #r)
-  | _ => failwith("Invalid")
-  }
-}
+let kcHF = Fingers.kcHF
 
-// Which finger presses each key. A fingermap profile starts from every key's
-// default finger (`kcHF`); the stronglytyped profile adds the alternate
-// fingerings recorded on /alt-fingerings, keyed by the physical key run of a
-// whole word. Where an entry exists it overrides the default finger for every
-// key in the word, so `judge` is fingered 4 3 7 8 3 rather than resting both
-// j and u on the left index.
+// Which finger presses each key, by the fingermap in use (see Fingermap): its
+// default fingers, then its key-pair rules, then its whole-word entries. With
+// stronglytyped, `judge` is fingered 4 3 7 8 3 rather than resting both j and u
+// on the left index.
 module Fingering = {
   type entry = {
     keys: array<string>,
@@ -876,21 +803,8 @@ module Fingering = {
     fingers: array<string>,
   }
 
-  let code = hf =>
-    switch hf {
-    | (#l, #p) => "lp"
-    | (#l, #r) => "lr"
-    | (#l, #m) => "lm"
-    | (#l, #i) => "li"
-    | (#l, #t) => "lt"
-    | (#r, #i) => "ri"
-    | (#r, #m) => "rm"
-    | (#r, #r) => "rr"
-    | (#r, #p) => "rp"
-    | (#r, #t) => "rt"
-    }
-
-  let sigOf = keys => keys->Array.joinWith(" ")
+  let code = Fingers.code
+  let sigOf = Fingers.sigOf
 
   // Which physical key carries a character, read off the record that draws the
   // board. Ansi.graphite2Keycode is Graphite proper, a different layout.
@@ -913,44 +827,16 @@ module Fingering = {
 
   let setLayout = board => charKey := keyMap(board)
 
-  // Only "alt" entries carry a fingering; "none" means the default is the only
-  // way to type the word, which is what a lookup miss already yields.
-  let table: ref<Dict.t<array<string>>> = ref(Dict.make())
+  // The fingermap in use.
+  let active = ref(Fingermap.standard)
 
-  let install = entries => {
-    let d = Dict.make()
-    entries->Array.forEach(e =>
-      if e.status == "alt" && e.fingers->Array.length == e.keys->Array.length {
-        d->Dict.set(sigOf(e.keys), e.fingers)
-      }
-    )
-    table := d
-  }
+  let use = map => active := map
 
-  let defaults = keys => keys->Array.map(k => code(kcHF(k)))
+  let baseFinger = keycode => Fingermap.baseFinger(active.contents, keycode)
 
-  type profile = {
-    id: string,
-    name: string,
-    // whether the recorded alternate fingerings apply
-    alternates: bool,
-  }
+  let defaults = keys => keys->Array.map(baseFinger)
 
-  let profiles = [
-    {id: "stronglytyped", name: "stronglytyped", alternates: true},
-    {id: "standard", name: "standard", alternates: false},
-  ]
-
-  // The profile in use.
-  let profile = ref(profiles->Array.getUnsafe(0))
-
-  let setProfile = id => profiles->Array.find(p => p.id == id)->Option.forEach(p => profile := p)
-
-  let forKeys = keys =>
-    switch profile.contents.alternates ? table.contents->Dict.get(sigOf(keys)) : None {
-    | Some(fingers) => fingers
-    | None => defaults(keys)
-    }
+  let forKeys = keys => Fingermap.resolve(active.contents, keys)
 
   // The word surrounding `offset` in `text`, as the review page tokenizes it:
   // a run of [a-z'-] with leading and trailing apostrophes and hyphens dropped.
@@ -960,7 +846,8 @@ module Fingering = {
   let charAt = (text, i) =>
     i < 0 || i >= text->String.length ? "" : text->Js.String2.charAt(i)->String.toLowerCase
 
-  let wordAround = (text, offset) => {
+  // The (start, stop) offsets of that word, if `offset` is in one.
+  let wordSpan = (text, offset) =>
     if !isWordChar(charAt(text, offset)) {
       None
     } else {
@@ -978,33 +865,37 @@ module Fingering = {
       while stop.contents > start.contents && isEdge(charAt(text, stop.contents)) {
         stop := stop.contents - 1
       }
-      if offset < start.contents || offset > stop.contents {
-        None
-      } else {
-        let keys = []
-        for i in start.contents to stop.contents {
-          switch charKey.contents->Dict.get(charAt(text, i)) {
-          | Some(keycode) => keys->Array.push(keycode)
-          | None => ()
-          }
-        }
-        keys->Array.length == stop.contents - start.contents + 1
-          ? Some(keys, offset - start.contents)
-          : None
-      }
+      offset < start.contents || offset > stop.contents
+        ? None
+        : Some((start.contents, stop.contents))
     }
+
+  // The physical keys that type `word` on the board's layout, or None if the
+  // layout can't type one of its characters.
+  let keysOf = word => {
+    let keys =
+      word
+      ->String.toLowerCase
+      ->String.split("")
+      ->Array.filterMap(ch => charKey.contents->Dict.get(ch))
+    keys->Array.length == word->String.length ? Some(keys) : None
   }
 
-  // The finger that actually presses the key at `offset`, consulting the
-  // recorded fingering for the word it sits in.
+  let wordAround = (text, offset) =>
+    wordSpan(text, offset)->Option.flatMap(((start, stop)) =>
+      keysOf(text->String.slice(~start, ~end=stop + 1))->Option.map(keys => (keys, offset - start))
+    )
+
+  // The finger that actually presses the key at `offset`, by the fingering of
+  // the word it sits in.
   let at = (text, offset, keycode) =>
     switch wordAround(text, offset) {
     | Some(keys, i) =>
       switch forKeys(keys)->Array.get(i) {
       | Some(f) => f
-      | None => code(kcHF(keycode))
+      | None => baseFinger(keycode)
       }
-    | None => code(kcHF(keycode))
+    | None => baseFinger(keycode)
     }
 }
 
@@ -1619,33 +1510,11 @@ module Trace = {
 }
 
 // The keys a finger covers by default in the central block, the 33 letter
-// and punctuation keys between Tab and Return, by physical key. Computed once
-// per finger.
-let fingerKeys = {
-  let zones = Dict.make()
-  finger =>
-    switch zones->Dict.get(finger) {
-    | Some(keys) => keys
-    | None =>
-      let keys =
-        Ansi.codes->Array.filter(code =>
-          Trace.isAlpha(code) && Fingering.code(kcHF(code)) == finger
-        )
-      zones->Dict.set(finger, keys)
-      keys
-    }
-}
+// and punctuation keys between Tab and Return, by the fingermap in use.
+let fingerKeys = finger =>
+  Ansi.codes->Array.filter(code => Trace.isAlpha(code) && Fingering.baseFinger(code) == finger)
 
-// Each finger's colour, the same on both hands: index amber, middle emerald,
-// ring sky, pinky violet. `finger` is a two-letter code such as "ri".
-let fingerColor = finger =>
-  switch finger->Js.String2.charAt(1) {
-  | "i" => "251 191 36"
-  | "m" => "52 211 153"
-  | "r" => "56 189 248"
-  | "p" => "167 139 250"
-  | _ => "241 245 249"
-  }
+let fingerColor = Fingers.color
 
 // Whether keypresses light up the pressing finger's keys; set from the
 // command palette.
@@ -2339,6 +2208,18 @@ type draft = {
   savedBoard: Ansi.t,
 }
 
+// A fingermap open in the editor, like `draft` for layouts. Save writes `map`
+// to the custom fingermap `saved`, or to a new one when it began as a
+// built-in.
+type fingermapDraft = {
+  saved: option<string>,
+  map: Fingermap.t,
+  // what was last saved, to tell whether anything has changed since
+  savedMap: Fingermap.t,
+}
+
+type importing = Layout | Fingermap
+
 @val @scope(("navigator", "clipboard"))
 external writeText: string => Js.Promise.t<unit> = "writeText"
 
@@ -2382,7 +2263,7 @@ let default = (props: props) => {
   }
 
   let (toast, setToast) = React.useState(() => None)
-  let (importing, setImporting) = React.useState(() => false)
+  let (importing, setImporting) = React.useState(() => None)
   let (importText, setImportText) = React.useState(() => "")
   let (importError, setImportError) = React.useState(() => None)
   // A layout's JSON, shown for copying by hand when the clipboard refuses it.
@@ -2392,7 +2273,26 @@ let default = (props: props) => {
 
   let (input, setInput) = React.useState(() => Keyboard.Translate)
 
-  let (profileId, setProfileId) = React.useState(() => "stronglytyped")
+  // The built-in fingermaps; stronglytyped carries the shipped alternates.
+  let builtinFingermaps = React.useMemo1(() => [
+    Fingermap.stronglytyped(
+      props.fingerings->Array.filterMap((e: Fingering.entry) =>
+        e.status == "alt" && e.fingers->Array.length == e.keys->Array.length
+          ? Some({Fingermap.keys: e.keys, fingers: e.fingers, status: "alt", examples: []})
+          : None
+      ),
+    ),
+    Fingermap.standard,
+  ], [props.fingerings])
+  // Fingermaps saved from the editor or imported, kept in this browser.
+  let (customFingermaps, setCustomFingermaps) = React.useState(() => [])
+  let allFingermaps = builtinFingermaps->Array.concat(customFingermaps)
+  let (fingermapId, setFingermapId) = React.useState(() => "stronglytyped")
+  let (fingermapDraft, setFingermapDraft) = React.useState(() => None)
+  let (fingermapTab, setFingermapTab) = React.useState(() => #keys)
+  // the finger the Keys tab paints with
+  let (brush, setBrush) = React.useState(() => "li")
+  let (wordQuery, setWordQuery) = React.useState(() => "")
   let (fingerZones, setFingerZones) = React.useState(() => true)
   let (falloff, setFalloff) = React.useState(() => true)
   // the weight on same-finger bumps, and the slider that sets it
@@ -2402,10 +2302,15 @@ let default = (props: props) => {
     max: 3.,
     step: 0.1,
   })
-  let profile =
-    Fingering.profiles
-    ->Array.find(p => p.id == profileId)
-    ->Option.getWithDefault(Fingering.profiles->Array.getUnsafe(0))
+  let fingermap =
+    allFingermaps
+    ->Array.find(m => m.id == fingermapId)
+    ->Option.getWithDefault(builtinFingermaps->Array.getUnsafe(0))
+  // While editing, fingers come from the draft.
+  let activeFingermap = switch fingermapDraft {
+  | Some(d) => d.map
+  | None => fingermap
+  }
   let inputName = input =>
     switch input {
     | Keyboard.Translate => "Translate"
@@ -2472,9 +2377,53 @@ let default = (props: props) => {
     })
   let newId = () => "custom-" ++ Js.Date.now()->Js.Float.toFixed
 
-  // A name no other layout has, by counting up: "My Dvorak 2", "My Dvorak 3"…
-  let uniqueName = (name, ~except) => {
-    let taken = n => allLayouts->Array.some(l => l.name == n && Some(l.id) != except)
+  // Custom fingermaps are stored as fingermap files, each with its id.
+  let storeCustomFingermaps = maps =>
+    remember(
+      "customFingermaps",
+      maps
+      ->Array.map((m: Fingermap.t) =>
+        Js.Json.object_(
+          Js.Dict.fromArray([("id", Js.Json.string(m.id)), ("fingermap", Fingermap.toJson(m))]),
+        )
+      )
+      ->Js.Json.array
+      ->Js.Json.stringify,
+    )
+  let loadCustomFingermaps = () =>
+    switch remembered("customFingermaps")->Option.flatMap(text =>
+      try {
+        Js.Json.parseExn(text)->Js.Json.decodeArray
+      } catch {
+      | _ => None
+      }
+    ) {
+    | Some(entries) =>
+      entries->Array.filterMap(entry =>
+        switch entry->Js.Json.decodeObject {
+        | Some(o) =>
+          switch (
+            o->Js.Dict.get("id")->Option.flatMap(Js.Json.decodeString),
+            o->Js.Dict.get("fingermap")->Option.map(Fingermap.fromJson),
+          ) {
+          | (Some(id), Some(Ok((name, base, rules, words)))) =>
+            Some({Fingermap.id, name, base, rules, words})
+          | _ => None
+          }
+        | None => None
+        }
+      )
+    | None => []
+    }
+  let updateCustomFingermaps = f =>
+    setCustomFingermaps(maps => {
+      let next = f(maps)
+      storeCustomFingermaps(next)
+      next
+    })
+
+  // A name nothing else has, by counting up: "My Dvorak 2", "My Dvorak 3"…
+  let unique = (taken, name) => {
     if !taken(name) {
       name
     } else {
@@ -2485,6 +2434,10 @@ let default = (props: props) => {
       `${name} ${Int.toString(i.contents)}`
     }
   }
+  let uniqueName = (name, ~except) =>
+    unique(n => allLayouts->Array.some(l => l.name == n && Some(l.id) != except), name)
+  let uniqueFingermapName = (name, ~except) =>
+    unique(n => allFingermaps->Array.some(m => m.name == n && Some(m.id) != except), name)
 
   React.useEffect0(() => {
     let custom = loadCustom()
@@ -2527,8 +2480,11 @@ let default = (props: props) => {
       })
     | _ => ()
     }
+    let customMaps = loadCustomFingermaps()
+    setCustomFingermaps(_ => customMaps)
     switch remembered("fingermap") {
-    | Some(id) if Fingering.profiles->Array.some(p => p.id == id) => setProfileId(_ => id)
+    | Some(id) if Fingermap.isBuiltin(id) || customMaps->Array.some(m => m.id == id) =>
+      setFingermapId(_ => id)
     | _ => ()
     }
     None
@@ -2628,13 +2584,8 @@ let default = (props: props) => {
     | _ => ()
     }
 
-  // Copy a layout file to the clipboard, or show it when the browser refuses.
-  let exportLayout = () => {
-    let name = switch draft {
-    | Some(d) => d.name
-    | None => layout.name
-    }
-    let json = Ansi.stringify(name, ansi)
+  // Copy a file to the clipboard, or show it when the browser refuses.
+  let copyOut = (name, json) => {
     let refused = () => setExported(_ => Some(json))
     let _ = try {
       writeText(json)
@@ -2653,6 +2604,16 @@ let default = (props: props) => {
     }
   }
 
+  let exportLayout = () => {
+    let name = switch draft {
+    | Some(d) => d.name
+    | None => layout.name
+    }
+    copyOut(name, Ansi.stringify(name, ansi))
+  }
+
+  let exportFingermap = () => copyOut(activeFingermap.name, Fingermap.stringify(activeFingermap))
+
   let importLayout = () =>
     switch Ansi.parse(importText) {
     | Ok((name, board)) =>
@@ -2660,26 +2621,135 @@ let default = (props: props) => {
       let id = newId()
       updateCustom(layouts => layouts->Array.concat([{Ansi.id, name, board}]))
       setLayoutId(_ => id)
-      setImporting(_ => false)
+      setImporting(_ => None)
       setImportText(_ => "")
       setImportError(_ => None)
       setToast(_ => Some(`Imported ${name}`))
     | Error(message) => setImportError(_ => Some(message))
     }
 
+  let importFingermap = () =>
+    switch Fingermap.parse(importText) {
+    | Ok((name, base, rules, words)) =>
+      let name = uniqueFingermapName(name, ~except=None)
+      let id = newId()
+      updateCustomFingermaps(maps => maps->Array.concat([{Fingermap.id, name, base, rules, words}]))
+      setFingermapId(_ => id)
+      setImporting(_ => None)
+      setImportText(_ => "")
+      setImportError(_ => None)
+      setToast(_ => Some(`Imported ${name}`))
+    | Error(message) => setImportError(_ => Some(message))
+    }
+
+  // The fingermap editor, on a draft of the fingermap in use. A built-in is
+  // copied first, as "My stronglytyped".
+  let editFingermap = f => setFingermapDraft(d => d->Option.map(d => {...d, map: f(d.map)}))
+
+  let startFingermap = () =>
+    switch fingermapDraft {
+    | Some(_) => ()
+    | None =>
+      setFingermapDraft(_ => Some(
+        Fingermap.isBuiltin(fingermap.id)
+          ? {saved: None, map: {...fingermap, name: "My " ++ fingermap.name}, savedMap: fingermap}
+          : {saved: Some(fingermap.id), map: fingermap, savedMap: fingermap},
+      ))
+    }
+
+  // Open a word in the editor's Words tab, starting the editor if need be.
+  let openWord = word =>
+    if draft == None {
+      startFingermap()
+      setFingermapTab(_ => #words)
+      setWordQuery(_ => word)
+    }
+
+  let fingermapChanged = d =>
+    d.map.base != d.savedMap.base ||
+    d.map.rules != d.savedMap.rules ||
+    d.map.words != d.savedMap.words ||
+    (d.saved != None && d.map.name != d.savedMap.name)
+
+  let saveFingermap = () =>
+    switch fingermapDraft {
+    | Some(d) if d.map.name->String.trim != "" =>
+      let name = uniqueFingermapName(d.map.name->String.trim, ~except=d.saved)
+      let id = d.saved->Option.getWithDefault(newId())
+      let map = {...d.map, id, name}
+      updateCustomFingermaps(maps =>
+        switch d.saved {
+        | Some(_) => maps->Array.map(m => m.id == id ? map : m)
+        | None => maps->Array.concat([map])
+        }
+      )
+      setFingermapId(_ => id)
+      setFingermapDraft(_ => Some({saved: Some(id), map, savedMap: map}))
+      setToast(_ => Some(`Saved ${name}`))
+    | _ => ()
+    }
+
+  let closeFingermap = () => {
+    let discard = () => setFingermapDraft(_ => None)
+    switch fingermapDraft {
+    | Some(d) if fingermapChanged(d) =>
+      setConfirming(_ => Some((`Discard changes to ${d.map.name}?`, "Discard", discard)))
+    | _ => discard()
+    }
+  }
+
+  let deleteFingermap = () =>
+    switch fingermapDraft {
+    | Some({saved: Some(id), map}) =>
+      setConfirming(_ => Some((
+        `Delete ${map.name}?`,
+        "Delete",
+        () => {
+          updateCustomFingermaps(maps => maps->Array.filter(m => m.id != id))
+          setFingermapId(_ => "stronglytyped")
+          setFingermapDraft(_ => None)
+          setToast(_ => Some(`Deleted ${map.name}`))
+        },
+      )))
+    | _ => ()
+    }
+
+  let paintDown = Editor.usePaint(~onPaint=code =>
+    editFingermap(m => Fingermap.withBase(m, code, brush))
+  )
+
   let (drag, onPointerDown) = Editor.useDrag(
     ~onSwap=(a, b) => editDraft(d => {...d, board: Ansi.swap(d.board, a, b)}),
     ~onSelect=code => setSelected(_ => Some(code)),
   )
-  let editor = draft->Option.map(_ => {
-    Editor.editable: code => Ansi.codes->Array.includes(code),
-    selected,
-    source: drag->Option.flatMap((d: Editor.drag) => d.moved ? Some(d.code) : None),
-    target: drag->Option.flatMap((d: Editor.drag) =>
-      d.target->Option.flatMap(t => t != d.code ? Some(t) : None)
-    ),
-    onPointerDown,
-  })
+  let editor = switch (draft, fingermapDraft) {
+  | (Some(_), _) =>
+    Some({
+      Editor.editable: code => Ansi.codes->Array.includes(code),
+      selected,
+      source: drag->Option.flatMap((d: Editor.drag) => d.moved ? Some(d.code) : None),
+      target: drag->Option.flatMap((d: Editor.drag) =>
+        d.target->Option.flatMap(t => t != d.code ? Some(t) : None)
+      ),
+      onPointerDown,
+      fill: _ => None,
+    })
+  // Every character key shows its default finger's colour; on the Keys tab
+  // they can be painted.
+  | (None, Some(d)) =>
+    Some({
+      Editor.editable: code => fingermapTab == #keys && Ansi.codes->Array.includes(code),
+      selected: None,
+      source: None,
+      target: None,
+      onPointerDown: paintDown,
+      fill: code =>
+        Ansi.codes->Array.includes(code)
+          ? Some(`rgb(${Fingers.color(Fingermap.baseFinger(d.map, code))} / 0.85)`)
+          : None,
+    })
+  | (None, None) => None
+  }
 
   React.useEffect1(() => {
     remember("input", inputName(input))
@@ -2707,13 +2777,18 @@ let default = (props: props) => {
     None
   }, [sameFingerWeight])
 
-  // Trails and bumps ask the profile which finger presses each key.
+  // Trails, bumps and finger zones ask the fingermap which finger presses
+  // each key.
   React.useEffect1(() => {
-    Fingering.setProfile(profileId)
+    Fingering.use(activeFingermap)
     Trace.forget()
-    remember("fingermap", profileId)
     None
-  }, [profileId])
+  }, [activeFingermap])
+
+  React.useEffect1(() => {
+    remember("fingermap", fingermapId)
+    None
+  }, [fingermapId])
 
   let exportCommand = {
     Palette.label: "Export layout",
@@ -2721,10 +2796,17 @@ let default = (props: props) => {
     checked: false,
     action: Run(exportLayout),
   }
-  // While editing, the layout stays put until the editor is closed.
-  let layoutCommands = switch draft {
-  | Some(_) => [exportCommand]
-  | None => [
+  let exportFingermapCommand = {
+    Palette.label: "Export fingermap",
+    hint: "copy to the clipboard",
+    checked: false,
+    action: Run(exportFingermap),
+  }
+  // While an editor is open, what it edits stays put until it is closed.
+  let layoutCommands = switch (draft, fingermapDraft) {
+  | (Some(_), _) => [exportCommand]
+  | (None, Some(_)) => [exportFingermapCommand]
+  | (None, None) => [
       {
         Palette.label: "Choose layout…",
         hint: layout.name,
@@ -2751,9 +2833,46 @@ let default = (props: props) => {
         label: "Import layout…",
         hint: "paste a layout file",
         checked: false,
-        action: Run(() => setImporting(_ => true)),
+        action: Run(() => setImporting(_ => Some(Layout))),
       },
     ]
+  }
+  let fingermapCommands = switch (draft, fingermapDraft) {
+  | (None, None) => [
+      {
+        Palette.label: "Choose fingermap…",
+        hint: fingermap.name,
+        checked: false,
+        action: Open({
+          title: "Fingermap",
+          placeholder: "Choose a fingermap…",
+          items: allFingermaps->Array.map(m => {
+            Palette.label: m.name,
+            hint: switch m.id {
+            | "stronglytyped" => "default fingers plus recorded alternates"
+            | "standard" => "default finger for every key"
+            | _ => "custom"
+            },
+            checked: m.id == fingermapId,
+            action: Run(() => setFingermapId(_ => m.id)),
+          }),
+        }),
+      },
+      {
+        label: "Edit fingermap",
+        hint: fingermap.name,
+        checked: false,
+        action: Run(startFingermap),
+      },
+      exportFingermapCommand,
+      {
+        label: "Import fingermap…",
+        hint: "paste a fingermap file",
+        checked: false,
+        action: Run(() => setImporting(_ => Some(Fingermap))),
+      },
+    ]
+  | _ => []
   }
 
   let commands: Palette.page = {
@@ -2761,7 +2880,7 @@ let default = (props: props) => {
     placeholder: "Type a command…",
     items: layoutCommands->Array.concat([
       {
-        label: "Choose input…",
+        Palette.label: "Choose input…",
         hint: inputName(input),
         checked: false,
         action: Open({
@@ -2783,23 +2902,7 @@ let default = (props: props) => {
           ],
         }),
       },
-      {
-        label: "Choose fingermap…",
-        hint: profile.name,
-        checked: false,
-        action: Open({
-          title: "Fingermap",
-          placeholder: "Choose a fingermap…",
-          items: Fingering.profiles->Array.map(p => {
-            Palette.label: p.name,
-            hint: p.alternates
-              ? "default fingers plus recorded alternates"
-              : "default finger for every key",
-            checked: p.id == profileId,
-            action: Run(() => setProfileId(_ => p.id)),
-          }),
-        }),
-      },
+    ]->Array.concat(fingermapCommands)->Array.concat([
       {
         label: "Finger highlights",
         hint: fingerZones ? "on" : "off",
@@ -2830,22 +2933,15 @@ let default = (props: props) => {
           onChange: settings => setSameFingerWeight(_ => settings),
         }),
       },
-    ]),
+    ])),
   }
-
-  // The table is read inside keypress handlers, so it only has to be in place
-  // before the first one; an effect keeps it off the server render path.
-  React.useEffect1(() => {
-    Fingering.install(props.fingerings)
-    None
-  }, [props.fingerings])
 
   React.useEffect5(() => {
     if Trace.showTrails {
       Trace.sync(~text, ~offset, ~color)
     }
     None
-  }, (text, offset, color, ansi, profileId))
+  }, (text, offset, color, ansi, activeFingermap))
 
   // React.useEffect1(() => {
   //   switch runState {
@@ -2871,41 +2967,81 @@ let default = (props: props) => {
       {React.string(label)}
     </button>
 
-  <div className="flex bg-b flex-col gap-8 w-[942px]">
-    {switch draft {
-    | Some(d) =>
-      <div className="flex items-center gap-3 font-mono text-sm text-slate-700">
-        <span> {React.string("Editing")} </span>
-        <input
-          className="w-56 rounded bg-slate-800 px-2 py-1 text-slate-100 outline-none ring-1 ring-white/10 focus:ring-sky-400"
-          value=d.name
-          placeholder="Layout name"
-          onChange={e => {
-            let name = ReactEvent.Form.target(e)["value"]
-            editDraft(d => {...d, name})
+  // The bar over the passage while an editor is open: the name, what to do,
+  // and Save, Export, Delete and Close.
+  let editorBar = (~name, ~placeholder, ~onName, ~middle, ~onSave, ~onExport, ~onDelete, ~onClose) =>
+    <div className="flex items-center gap-3 font-mono text-sm text-slate-700">
+      <span> {React.string("Editing")} </span>
+      <input
+        className="w-56 rounded bg-slate-800 px-2 py-1 text-slate-100 outline-none ring-1 ring-white/10 focus:ring-sky-400"
+        value=name
+        placeholder
+        onChange={e => onName(ReactEvent.Form.target(e)["value"])}
+        onKeyDown={e =>
+          switch ReactEvent.Keyboard.key(e) {
+          | "Enter" => onSave()
+          | "Escape" => ReactEvent.Keyboard.target(e)["blur"](.)
+          | _ => ()
           }}
-          onKeyDown={e =>
-            switch ReactEvent.Keyboard.key(e) {
-            | "Enter" => save()
-            | "Escape" => ReactEvent.Keyboard.target(e)["blur"](.)
-            | _ => ()
-            }}
-        />
-        <span className="whitespace-nowrap text-xs text-slate-600">
-          {React.string("drag to swap · click to edit")}
-        </span>
-        <div className="ml-auto flex gap-2">
-          {button(~label="Save", ~onClick=save, ~disabled=d.name->String.trim == "", ())}
-          {button(~label="Export", ~onClick=exportLayout, ())}
-          {d.saved != None ? button(~label="Delete", ~onClick=delete, ~danger=true, ()) : React.null}
-          {button(~label="Close", ~onClick=close, ())}
-        </div>
+      />
+      middle
+      <div className="ml-auto flex gap-2">
+        {button(~label="Save", ~onClick=onSave, ~disabled=name->String.trim == "", ())}
+        {button(~label="Export", ~onClick=onExport, ())}
+        {switch onDelete {
+        | Some(onClick) => button(~label="Delete", ~onClick, ~danger=true, ())
+        | None => React.null
+        }}
+        {button(~label="Close", ~onClick=onClose, ())}
       </div>
-    | None =>
+    </div>
+
+  let tab = (~label, ~active, ~onClick) =>
+    <button
+      className={"rounded px-2 py-0.5 text-xs " ++ (
+        active ? "bg-slate-800 text-slate-100" : "text-slate-600 hover:text-slate-900"
+      )}
+      onMouseDown={e => ReactEvent.Mouse.preventDefault(e)}
+      onClick={_ => onClick()}>
+      {React.string(label)}
+    </button>
+
+  <div className="flex bg-b flex-col gap-8 w-[942px]">
+    {switch (draft, fingermapDraft) {
+    | (Some(d), _) =>
+      editorBar(
+        ~name=d.name,
+        ~placeholder="Layout name",
+        ~onName=name => editDraft(d => {...d, name}),
+        ~middle=<span className="whitespace-nowrap text-xs text-slate-600">
+          {React.string("drag to swap · click to edit")}
+        </span>,
+        ~onSave=save,
+        ~onExport=exportLayout,
+        ~onDelete=d.saved != None ? Some(delete) : None,
+        ~onClose=close,
+      )
+    | (None, Some(d)) =>
+      editorBar(
+        ~name=d.map.name,
+        ~placeholder="Fingermap name",
+        ~onName=name => editFingermap(m => {...m, name}),
+        ~middle=<div className="flex gap-1">
+          {tab(~label="Keys", ~active=fingermapTab == #keys, ~onClick=() => setFingermapTab(_ => #keys))}
+          {tab(~label="Words", ~active=fingermapTab == #words, ~onClick=() =>
+            setFingermapTab(_ => #words)
+          )}
+        </div>,
+        ~onSave=saveFingermap,
+        ~onExport=exportFingermap,
+        ~onDelete=d.saved != None ? Some(deleteFingermap) : None,
+        ~onClose=closeFingermap,
+      )
+    | (None, None) =>
       <div className="flex justify-end gap-3 font-mono text-sm text-slate-700">
         <span>
           {React.string(
-            [layout.name, inputName(input)->String.toLowerCase, profile.name]->Array.joinWith(
+            [layout.name, inputName(input)->String.toLowerCase, activeFingermap.name]->Array.joinWith(
               " · ",
             ),
           )}
@@ -2931,7 +3067,21 @@ let default = (props: props) => {
               "text-slate-600"
             }
           }
-          <span className> {React.string(char)} </span>
+          // Clicking a word opens its fingering in the fingermap editor. The
+          // passage is a button, so keep it from taking focus and the click.
+          let inWord = Fingering.isWordChar(char->String.toLowerCase)
+          <span
+            className={inWord ? className ++ " cursor-pointer" : className}
+            onMouseDown={e => ReactEvent.Mouse.preventDefault(e)}
+            onClick={e => {
+              ReactEvent.Mouse.stopPropagation(e)
+              switch Fingering.wordSpan(text, i) {
+              | Some((start, stop)) => openWord(text->String.slice(~start, ~end=stop + 1))
+              | None => ()
+              }
+            }}>
+            {React.string(char)}
+          </span>
         }),
       )}
     </button>
@@ -2965,12 +3115,103 @@ let default = (props: props) => {
       />
     | _ => React.null
     }}
-    {importing
-      ? <Editor.Dialog title="Import layout" onClose={() => setImporting(_ => false)}>
+    {switch (fingermapDraft, fingermapTab) {
+    | (Some(_), #keys) =>
+      <div
+        className="flex flex-col gap-3 rounded-xl bg-slate-800 px-6 py-4 font-mono text-sm text-slate-300 shadow-2xl shadow-black ring-1 ring-white/10">
+        <FingermapEditor.Swatches selected=brush onSelect={f => setBrush(_ => f)} />
+        <div className="flex items-center gap-3 text-xs text-slate-400">
+          <span>
+            {React.string(
+              `Click or drag across keys to give them the ${Fingers.fingerName(brush)}.`,
+            )}
+          </span>
+          <span className="ml-auto">
+            {button(~label="Reset keys to standard", ~onClick=() =>
+              editFingermap(m => {...m, base: Dict.make()})
+            , ())}
+          </span>
+        </div>
+      </div>
+    | (Some(d), #words) =>
+      let word = wordQuery->String.trim
+      // a word's letters on this layout, from its keys
+      let spell = keys =>
+        keys
+        ->Array.map(k =>
+          Ansi.labelsOf(ansi, k)->Option.map(l => fst(Ansi.layers(l)))->Option.getWithDefault("?")
+        )
+        ->Array.joinWith("")
+      let entries =
+        d.map.words
+        ->Dict.valuesToArray
+        ->Array.filter(w => w.status == "alt")
+        ->Array.map(w => (w.examples->Array.get(0)->Option.getWithDefault(spell(w.keys)), w))
+        ->Array.filter(((spelled, _)) => word == "" || spelled->String.includes(word->String.toLowerCase))
+        ->Array.sort(((a, _), (b, _)) => a < b ? -1 : a > b ? 1 : 0)
+      <div
+        className="flex flex-col gap-4 rounded-xl bg-slate-800 px-6 py-4 font-mono text-sm text-slate-300 shadow-2xl shadow-black ring-1 ring-white/10">
+        <input
+          className="w-72 rounded bg-slate-900 px-3 py-2 text-slate-100 outline-none ring-1 ring-white/10 focus:ring-sky-400"
+          placeholder="Type a word"
+          value=wordQuery
+          onChange={e => setWordQuery(ReactEvent.Form.target(e)["value"])}
+          onKeyDown={e =>
+            if ReactEvent.Keyboard.key(e) == "Escape" {
+              ReactEvent.Keyboard.target(e)["blur"](.)
+            }}
+        />
+        {switch word == "" ? None : Some(Fingering.keysOf(word)) {
+        | None => React.null
+        | Some(None) =>
+          <div className="text-amber-300">
+            {React.string(`${layout.name} can't type "${word}".`)}
+          </div>
+        | Some(Some(keys)) =>
+          let sig = Fingers.sigOf(keys)
+          let entry = d.map.words->Dict.get(sig)
+          <FingermapEditor.Word
+            key={sig ++ "|" ++ word}
+            letters={word->String.split("")}
+            resolved={Fingermap.resolveWithSources(d.map, keys)}
+            hasEntry={entry->Option.map(e => e.status == "alt")->Option.getWithDefault(false)}
+            onSave={fingers =>
+              editFingermap(m =>
+                Fingermap.withWord(
+                  m,
+                  {
+                    keys,
+                    fingers,
+                    status: "alt",
+                    examples: switch entry {
+                    | Some(e) if !(e.examples->Array.includes(word->String.toLowerCase)) =>
+                      e.examples->Array.concat([word->String.toLowerCase])
+                    | Some(e) => e.examples
+                    | None => [word->String.toLowerCase]
+                    },
+                  },
+                )
+              )}
+            onReset={() => editFingermap(m => Fingermap.withoutWord(m, keys))}
+          />
+        }}
+        <FingermapEditor.Entries
+          entries
+          onOpen={spelled => setWordQuery(_ => spelled)}
+          onRemove={keys => editFingermap(m => Fingermap.withoutWord(m, keys))}
+        />
+      </div>
+    | _ => React.null
+    }}
+    {switch importing {
+    | Some(kind) =>
+      <Editor.Dialog
+        title={kind == Layout ? "Import layout" : "Import fingermap"}
+        onClose={() => setImporting(_ => None)}>
           <textarea
             autoFocus=true
             className="h-48 resize-none rounded bg-slate-900 p-3 text-xs text-slate-100 outline-none ring-1 ring-white/10 focus:ring-sky-400"
-            placeholder="Paste a layout"
+            placeholder={kind == Layout ? "Paste a layout" : "Paste a fingermap"}
             value=importText
             onChange={e => {
               let text = ReactEvent.Form.target(e)["value"]
@@ -2983,15 +3224,21 @@ let default = (props: props) => {
           | None => React.null
           }}
           <div className="flex justify-end gap-2">
-            {button(~label="Cancel", ~onClick=() => setImporting(_ => false), ())}
-            {button(~label="Import", ~onClick=importLayout, ~disabled=importText->String.trim == "", ())}
+            {button(~label="Cancel", ~onClick=() => setImporting(_ => None), ())}
+            {button(
+              ~label="Import",
+              ~onClick=kind == Layout ? importLayout : importFingermap,
+              ~disabled=importText->String.trim == "",
+              (),
+            )}
           </div>
         </Editor.Dialog>
-      : React.null}
+    | None => React.null
+    }}
     {switch exported {
     | Some(json) =>
       <Editor.Dialog
-        title="The clipboard isn't available here. Copy the layout below."
+        title="The clipboard isn't available here. Copy the file below."
         onClose={() => setExported(_ => None)}>
         <textarea
           autoFocus=true

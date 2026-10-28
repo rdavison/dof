@@ -16,67 +16,11 @@ type hf = (hand, finger)
 let hf: string => hf = keycode => Keeb.kcHF(keycode)
 
 // Fingers are recorded as two-letter codes, and spelled with one digit per
-// letter: the number-row key each finger rests on, so 1-4 is left pinky to
-// left index and 7-0 is right index to right pinky. That leaves 5 and 6, the
-// two keys nothing reaches from home, for the thumbs.
-let fingerCode = (hf: hf) =>
-  switch hf {
-  | (#l, #p) => "lp"
-  | (#l, #r) => "lr"
-  | (#l, #m) => "lm"
-  | (#l, #i) => "li"
-  | (#l, #t) => "lt"
-  | (#r, #i) => "ri"
-  | (#r, #m) => "rm"
-  | (#r, #r) => "rr"
-  | (#r, #p) => "rp"
-  | (#r, #t) => "rt"
-  }
-
-let codeOfDigit = d =>
-  switch d {
-  | "1" => Some("lp")
-  | "2" => Some("lr")
-  | "3" => Some("lm")
-  | "4" => Some("li")
-  | "7" => Some("ri")
-  | "8" => Some("rm")
-  | "9" => Some("rr")
-  | "0" => Some("rp")
-  | "5" => Some("lt")
-  | "6" => Some("rt")
-  | _ => None
-  }
-
-let digitOfCode = c =>
-  switch c {
-  | "lp" => "1"
-  | "lr" => "2"
-  | "lm" => "3"
-  | "li" => "4"
-  | "ri" => "7"
-  | "rm" => "8"
-  | "rr" => "9"
-  | "rp" => "0"
-  | "lt" => "5"
-  | "rt" => "6"
-  | _ => "?"
-  }
-
-let fingerName = c =>
-  switch c {
-  | "lp" => "left pinky"
-  | "lr" => "left ring"
-  | "lm" => "left middle"
-  | "li" => "left index"
-  | "ri" => "right index"
-  | "rm" => "right middle"
-  | "rr" => "right ring"
-  | "rp" => "right pinky"
-  | "lt" => "left thumb"
-  | "rt" => "right thumb"
-  | _ => c
-  }
+// letter; see Fingers.
+let fingerCode = Fingers.code
+let codeOfDigit = Fingers.codeOfDigit
+let digitOfCode = Fingers.digitOfCode
+let fingerName = Fingers.fingerName
 
 // The legend printed on the physical key, as a US ANSI Magic Keyboard has it.
 // Which character sits on which physical key, read off the same record that
@@ -130,74 +74,14 @@ let wordKeys = word =>
     }
   )
 
-// Key pairs that are never worth re-fingering. Each is a one-row reach on a
-// single finger, short enough that nobody reaches around it. Named by physical
-// key, like everything else recorded here; the letters are what the amaranth
-// layout puts on them today.
-let ignored = [
-  ("KeyI", "KeyK"), // l·t -- right middle, top to home
-  ("KeyH", "KeyM"), // m·f -- right index, home to bottom
-  ("KeyP", "Semicolon"), // w·r -- right pinky, top to home
-  ("KeyL", "KeyO"), // s·c -- right ring, home to top
-  ("KeyH", "KeyN"), // m·b -- right index, home to bottom
-  ("KeyJ", "KeyH"), // h·m -- right index, home to home
-  ("KeyF", "KeyT"), // n·j -- left index, home to top
-  ("Comma", "KeyI"), // g·l -- right middle, bottom to top
-  ("Comma", "KeyK"), // g·t -- right middle, bottom to home
-  ("KeyW", "KeyS"), // y·i -- left ring, top to home
-]
-
-let isIgnored = (a, b) => ignored->Array.some(((x, y)) => (a == x && b == y) || (a == y && b == x))
-
-// Adjacent positions that land on the same finger but a different key -- the
-// same-finger bigrams, minus the ignored pairs above. Skipgrams are
-// deliberately not counted: a key in between gives the finger time to move, so
-// they rarely want a different fingering. Fingers are passed in rather than
-// derived, so the same test applies to a proposed alt fingering.
-let pairsUnder = (keys, fingers) => {
-  let out = []
-  let key = i => keys->Array.getUnsafe(i)
-  let finger = i => fingers->Array.getUnsafe(i)
-  for i in 0 to keys->Array.length - 2 {
-    if key(i) != key(i + 1) && finger(i) == finger(i + 1) && !isIgnored(key(i), key(i + 1)) {
-      out->Array.push((i, i + 1))
-    }
-  }
-  out
-}
+// Key pairs that are never worth re-fingering, and the same-finger bigrams
+// that remain; see Fingers.
+let pairsUnder = Fingers.pairsUnder
 
 let defaultFingers = keys => keys->Array.map(kc => fingerCode(hf(kc)))
 let defaultPairs = keys => pairsUnder(keys, defaultFingers(keys))
 
-// A finger spelling: one digit per letter, or "." to keep the default finger.
-let parseSpelling = (text, defaults) => {
-  let chars = text->String.trim->String.split("")->Array.filter(x => x != " ")
-  if chars->Array.length != defaults->Array.length {
-    Error(
-      `Expected ${defaults->Array.length->Int.toString} digits, got ${chars
-        ->Array.length
-        ->Int.toString}`,
-    )
-  } else {
-    let bad = ref(None)
-    let fingers = chars->Array.mapWithIndex((ch, i) =>
-      switch ch {
-      | "." => defaults->Array.getUnsafe(i)
-      | d =>
-        switch codeOfDigit(d) {
-        | Some(code) => code
-        | None =>
-          bad := Some(d)
-          ""
-        }
-      }
-    )
-    switch bad.contents {
-    | Some(d) => Error(`"${d}" is not a finger -- use 1-4 and 7-0, or . to keep the default`)
-    | None => Ok(fingers)
-    }
-  }
-}
+let parseSpelling = Fingers.parseSpelling
 
 // The identity of a key run, so the same awkward reach can be counted across
 // every word that contains it.
@@ -237,7 +121,7 @@ type props = {
 // plain JS objects of strings, ints and arrays, so they round-trip as is.
 @scope("JSON") @val external parseFile: string => file = "parse"
 
-let sigOf = keys => keys->Array.joinWith(" ")
+let sigOf = Fingers.sigOf
 
 let storageKey = "dof.altFingerings.v1"
 

@@ -14,6 +14,8 @@ type handlers = {
   source: option<string>,
   target: option<string>,
   onPointerDown: (string, ReactEvent.Pointer.t) => unit,
+  // a colour to fill the key with, such as its finger's
+  fill: string => option<string>,
 }
 
 let context: React.Context.t<option<handlers>> = React.createContext(None)
@@ -107,6 +109,44 @@ let useDrag = (~onSwap, ~onSelect) => {
     }
 
   (drag, onPointerDown)
+}
+
+// Press on a key and drag across others: each key the pointer crosses is
+// painted once, as with a brush. Returns the handler for a key's pointer-down.
+let usePaint = (~onPaint) => {
+  // the last key painted while the button is down
+  let last = React.useRef(None)
+  let callback = React.useRef(onPaint)
+  callback.current = onPaint
+
+  React.useEffect0(() => {
+    let onMove = ev =>
+      switch (last.current, keyAt({x: clientX(ev), y: clientY(ev)})) {
+      | (Some(previous), Some(code)) if code != previous =>
+        last.current = Some(code)
+        callback.current(code)
+      | _ => ()
+      }
+    let onUp = _ => last.current = None
+    let w = Webapi.Dom.window
+    w->Webapi.Dom.Window.addEventListener("pointermove", onMove)
+    w->Webapi.Dom.Window.addEventListener("pointerup", onUp)
+    w->Webapi.Dom.Window.addEventListener("pointercancel", onUp)
+    Some(
+      () => {
+        w->Webapi.Dom.Window.removeEventListener("pointermove", onMove)
+        w->Webapi.Dom.Window.removeEventListener("pointerup", onUp)
+        w->Webapi.Dom.Window.removeEventListener("pointercancel", onUp)
+      },
+    )
+  })
+
+  (code, e) =>
+    if ReactEvent.Pointer.button(e) == 0 {
+      ReactEvent.Pointer.preventDefault(e)
+      last.current = Some(code)
+      onPaint(code)
+    }
 }
 
 // The dragged key, following the pointer. It ignores the pointer itself, so
