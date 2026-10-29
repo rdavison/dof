@@ -2243,6 +2243,24 @@ let default = (props: props) => {
 
   let (runState, setRunState) = React.useState(() => #Init)
 
+  // Every distinct word in the corpus, tokenized as the review page does.
+  let corpusWords = React.useMemo1(() => {
+    let seen = Dict.make()
+    quotes->Array.forEach(q =>
+      q.text
+      ->String.toLowerCase
+      ->Js.String2.replaceByRe(%re("/[^a-z'-]+/g"), " ")
+      ->String.split(" ")
+      ->Array.forEach(w => {
+        let w = w->Js.String2.replaceByRe(%re("/^['-]+|['-]+$/g"), "")
+        if w != "" {
+          seen->Dict.set(w, true)
+        }
+      })
+    )
+    seen->Dict.keysToArray
+  }, [quotes])
+
   // Layouts saved from the editor or imported, kept in this browser.
   let (customLayouts, setCustomLayouts) = React.useState(() => [])
   let allLayouts = Ansi.layouts->Array.concat(customLayouts)
@@ -2261,6 +2279,20 @@ let default = (props: props) => {
   | Some(d) => d.board
   | None => layout.board
   }
+
+  // The corpus words' keys on the board's layout, for counting what a rule
+  // changes. Words the layout can't type are left out.
+  let corpusKeys = React.useMemo2(() => {
+    let charKey = Fingering.keyMap(ansi)
+    corpusWords->Array.filterMap(w => {
+      let keys = w->String.split("")->Array.filterMap(ch => charKey->Dict.get(ch))
+      keys->Array.length == w->String.length ? Some(keys) : None
+    })
+  }, (corpusWords, ansi))
+
+  // The character a key types without shift on the board's layout.
+  let charOn = keycode =>
+    Ansi.labelsOf(ansi, keycode)->Option.map(l => fst(Ansi.layers(l)))->Option.getWithDefault("?")
 
   let (toast, setToast) = React.useState(() => None)
   let (importing, setImporting) = React.useState(() => None)
@@ -3031,6 +3063,9 @@ let default = (props: props) => {
           {tab(~label="Words", ~active=fingermapTab == #words, ~onClick=() =>
             setFingermapTab(_ => #words)
           )}
+          {tab(~label="Rules", ~active=fingermapTab == #rules, ~onClick=() =>
+            setFingermapTab(_ => #rules)
+          )}
         </div>,
         ~onSave=saveFingermap,
         ~onExport=exportFingermap,
@@ -3199,6 +3234,45 @@ let default = (props: props) => {
           entries
           onOpen={spelled => setWordQuery(_ => spelled)}
           onRemove={keys => editFingermap(m => Fingermap.withoutWord(m, keys))}
+        />
+      </div>
+    | (Some(d), #rules) =>
+      let rules = d.map.rules->Array.map(r => {
+        let without = Fingermap.withoutRule(d.map, r.pair)
+        {
+          FingermapEditor.pair: r.pair,
+          first: charOn(fst(r.pair)),
+          second: charOn(snd(r.pair)),
+          fingers: r.fingers,
+          changes: corpusKeys
+          ->Array.filter(keys =>
+            Fingermap.hasPair(keys, r.pair) &&
+            Fingermap.resolve(d.map, keys) != Fingermap.resolve(without, keys)
+          )
+          ->Array.length,
+        }
+      })
+      <div
+        className="flex flex-col gap-4 rounded-xl bg-slate-800 px-6 py-4 font-mono text-sm text-slate-300 shadow-2xl shadow-black ring-1 ring-white/10">
+        <FingermapEditor.Rules
+          rules
+          onAdd={(first, second, firstFinger, secondFinger) => {
+            let charKey = Fingering.keyMap(ansi)
+            switch (
+              charKey->Dict.get(first->String.toLowerCase),
+              charKey->Dict.get(second->String.toLowerCase),
+            ) {
+            | (None, _) => Some(`${layout.name} has no key for "${first}".`)
+            | (_, None) => Some(`${layout.name} has no key for "${second}".`)
+            | (Some(a), Some(b)) if a == b => Some("A rule needs two different keys.")
+            | (Some(a), Some(b)) =>
+              editFingermap(m =>
+                Fingermap.withRule(m, {Fingermap.pair: (a, b), fingers: (firstFinger, secondFinger)})
+              )
+              None
+            }
+          }}
+          onRemove={pair => editFingermap(m => Fingermap.withoutRule(m, pair))}
         />
       </div>
     | _ => React.null
