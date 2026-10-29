@@ -313,15 +313,16 @@ let download = (~filename, ~contents) => {
 }
 
 // The grid is styled by class, so an inline style is enough to mark a key and
-// removing the attribute puts it back exactly as it was.
+// removing the attribute puts it back exactly as it was. Keys carry their code
+// as data-code.
 let paint = (keycode, bg, fg) =>
-  switch document->WDom.Document.getElementById(keycode) {
+  switch document->WDom.Document.querySelector(`[data-code="${keycode}"]`) {
   | Some(el) => el->WDom.Element.setAttribute("style", `background-color:${bg};color:${fg}`)
   | None => ()
   }
 
 let unpaint = keycode =>
-  switch document->WDom.Document.getElementById(keycode) {
+  switch document->WDom.Document.querySelector(`[data-code="${keycode}"]`) {
   | Some(el) => el->WDom.Element.removeAttribute("style")
   | None => ()
   }
