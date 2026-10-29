@@ -2181,14 +2181,15 @@ let getStaticProps: Next.GetStaticProps.t<props, 'params, 'previewData> = _conte
   let data = Node.Fs.readFileAsUtf8Sync("corpus/english.json")
   // A missing or unreadable file just means every word is fingered by default.
   // Rebuilt field by field: the parsed objects also carry the review page's
-  // words, legends and notes, which would double this page's payload.
+  // words, legends and notes, which would double this page's payload. "none"
+  // answers go too, without fingers, so the review queue doesn't ask again.
   let fingerings = try {
     parseFingerings(Node.Fs.readFileAsUtf8Sync("data/alt-fingerings.json")).entries
-    ->Array.filter((e: Fingering.entry) => e.status == "alt")
+    ->Array.filter((e: Fingering.entry) => e.status == "alt" || e.status == "none")
     ->Array.map((e: Fingering.entry) => {
       Fingering.keys: e.keys,
       status: e.status,
-      fingers: e.fingers,
+      fingers: e.status == "alt" ? e.fingers : [],
     })
   } catch {
   | _ => []
@@ -2243,9 +2244,10 @@ let default = (props: props) => {
 
   let (runState, setRunState) = React.useState(() => #Init)
 
-  // Every distinct word in the corpus, tokenized as the review page does.
+  // Every distinct word in the corpus with how often it comes up, tokenized as
+  // the review page does.
   let corpusWords = React.useMemo1(() => {
-    let seen = Dict.make()
+    let counts = Dict.make()
     quotes->Array.forEach(q =>
       q.text
       ->String.toLowerCase
@@ -2254,11 +2256,11 @@ let default = (props: props) => {
       ->Array.forEach(w => {
         let w = w->Js.String2.replaceByRe(%re("/^['-]+|['-]+$/g"), "")
         if w != "" {
-          seen->Dict.set(w, true)
+          counts->Dict.set(w, counts->Dict.get(w)->Option.getWithDefault(0) + 1)
         }
       })
     )
-    seen->Dict.keysToArray
+    counts->Dict.toArray
   }, [quotes])
 
   // Layouts saved from the editor or imported, kept in this browser.
@@ -2280,13 +2282,14 @@ let default = (props: props) => {
   | None => layout.board
   }
 
-  // The corpus words' keys on the board's layout, for counting what a rule
-  // changes. Words the layout can't type are left out.
+  // The corpus words with their counts and keys on the board's layout, for
+  // counting what a rule changes and for the review queue. Words the layout
+  // can't type are left out.
   let corpusKeys = React.useMemo2(() => {
     let charKey = Fingering.keyMap(ansi)
-    corpusWords->Array.filterMap(w => {
-      let keys = w->String.split("")->Array.filterMap(ch => charKey->Dict.get(ch))
-      keys->Array.length == w->String.length ? Some(keys) : None
+    corpusWords->Array.filterMap(((word, count)) => {
+      let keys = word->String.split("")->Array.filterMap(ch => charKey->Dict.get(ch))
+      keys->Array.length == word->String.length ? Some((word, count, keys)) : None
     })
   }, (corpusWords, ansi))
 
@@ -2309,9 +2312,12 @@ let default = (props: props) => {
   let builtinFingermaps = React.useMemo1(() => [
     Fingermap.stronglytyped(
       props.fingerings->Array.filterMap((e: Fingering.entry) =>
-        e.status == "alt" && e.fingers->Array.length == e.keys->Array.length
-          ? Some({Fingermap.keys: e.keys, fingers: e.fingers, status: "alt", examples: []})
-          : None
+        switch e.status {
+        | "alt" if e.fingers->Array.length == e.keys->Array.length =>
+          Some({Fingermap.keys: e.keys, fingers: e.fingers, status: "alt", examples: []})
+        | "none" => Some({Fingermap.keys: e.keys, fingers: [], status: "none", examples: []})
+        | _ => None
+        }
       ),
     ),
     Fingermap.standard,
@@ -2746,6 +2752,32 @@ let default = (props: props) => {
     | _ => ()
     }
 
+  // The review queue: corpus words the layout can type that still repeat a
+  // finger on two different keys back to back under the draft, and haven't
+  // been answered, most frequent first. Only worked out while the tab is open.
+  let reviewQueue = React.useMemo3(() =>
+    switch (fingermapDraft, fingermapTab) {
+    | (Some(d), #review) =>
+      corpusKeys
+      ->Array.filter(((_, _, keys)) =>
+        d.map.words->Dict.get(Fingers.sigOf(keys))->Option.isNone &&
+          Fingers.pairsUnder(keys, Fingermap.resolve(d.map, keys))->Array.length > 0
+      )
+      ->Array.sort(((a, countA, _), (b, countB, _)) =>
+        countA == countB ? a < b ? -1 : 1 : countB - countA
+      )
+    | _ => []
+    }
+  , (fingermapDraft, corpusKeys, fingermapTab))
+  // Keys of the words answered in this review, newest last, for Undo.
+  let (reviewed, setReviewed) = React.useState(() => [])
+  React.useEffect1(() => {
+    if fingermapDraft == None {
+      setReviewed(_ => [])
+    }
+    None
+  }, [fingermapDraft == None])
+
   let paintDown = Editor.usePaint(~onPaint=code =>
     editFingermap(m => Fingermap.withBase(m, code, brush))
   )
@@ -3066,6 +3098,9 @@ let default = (props: props) => {
           {tab(~label="Rules", ~active=fingermapTab == #rules, ~onClick=() =>
             setFingermapTab(_ => #rules)
           )}
+          {tab(~label="Review", ~active=fingermapTab == #review, ~onClick=() =>
+            setFingermapTab(_ => #review)
+          )}
         </div>,
         ~onSave=saveFingermap,
         ~onExport=exportFingermap,
@@ -3245,7 +3280,7 @@ let default = (props: props) => {
           second: charOn(snd(r.pair)),
           fingers: r.fingers,
           changes: corpusKeys
-          ->Array.filter(keys =>
+          ->Array.filter(((_, _, keys)) =>
             Fingermap.hasPair(keys, r.pair) &&
             Fingermap.resolve(d.map, keys) != Fingermap.resolve(without, keys)
           )
@@ -3274,6 +3309,41 @@ let default = (props: props) => {
           }}
           onRemove={pair => editFingermap(m => Fingermap.withoutRule(m, pair))}
         />
+      </div>
+    | (Some(d), #review) =>
+      <div
+        className="flex flex-col gap-4 rounded-xl bg-slate-800 px-6 py-4 font-mono text-sm text-slate-300 shadow-2xl shadow-black ring-1 ring-white/10">
+        {switch reviewQueue->Array.get(0) {
+        | None =>
+          <div className="text-slate-300">
+            {React.string(
+              `Nothing to review: every corpus word ${layout.name} can type is free of same-finger bigrams under ${d.map.name}, or already answered.`,
+            )}
+          </div>
+        | Some((word, count, keys)) =>
+          <FingermapEditor.Review
+            key={Fingers.sigOf(keys)}
+            letters={word->String.split("")}
+            keys
+            resolved={Fingermap.resolve(d.map, keys)}
+            count
+            left={reviewQueue->Array.length}
+            onAnswer={(status, fingers) => {
+              editFingermap(m => Fingermap.withWord(m, {keys, fingers, status, examples: [word]}))
+              setReviewed(r => r->Array.concat([keys]))
+            }}
+            onUndo={switch reviewed->Array.at(-1) {
+            | Some(last) =>
+              Some(
+                () => {
+                  editFingermap(m => Fingermap.withoutWord(m, last))
+                  setReviewed(r => r->Array.slice(~start=0, ~end=r->Array.length - 1))
+                },
+              )
+            | None => None
+            }}
+          />
+        }}
       </div>
     | _ => React.null
     }}

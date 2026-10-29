@@ -50,10 +50,70 @@ let sourceLabel = (source: Fingermap.source) =>
   | Word => "word"
   }
 
-// A word's letters, each over a chip in its finger's colour. Clicking a chip
-// offers the ten fingers. Save keeps the fingering as a word entry; Reset drops
-// the entry so the word falls back to the default fingers and rules. Keyed by
-// the word's keys in the parent, so a new word starts with no edits.
+// A word's letters, each over a chip in its finger's colour with a note under
+// it. Clicking a chip offers the ten fingers. Letters in `marked` show in red,
+// such as the two letters of a same-finger bigram.
+module Chips = {
+  @react.component
+  let make = (
+    ~letters: array<string>,
+    ~fingers: array<string>,
+    ~notes: array<string>,
+    ~marked: array<bool>=[],
+    ~onPick,
+  ) => {
+    let (picking, setPicking) = React.useState(() => None)
+    <div className="flex flex-wrap gap-2">
+      {letters
+      ->Array.mapWithIndex((ch, i) => {
+        let finger = fingers->Array.getUnsafe(i)
+        let red = marked->Array.get(i)->Option.getWithDefault(false)
+        <div key={Int.toString(i)} className="relative flex flex-col items-center gap-1">
+          <div className={"text-3xl " ++ (red ? "text-red-400" : "text-slate-100")}>
+            {React.string(ch)}
+          </div>
+          <button
+            className="w-14 rounded px-1 py-1 text-[11px] text-slate-900"
+            style={ReactDOM.Style.make(~backgroundColor=fill(finger), ())}
+            onMouseDown={e => ReactEvent.Mouse.preventDefault(e)}
+            onClick={_ => setPicking(p => p == Some(i) ? None : Some(i))}>
+            {React.string(short(finger))}
+          </button>
+          <div className="text-[10px] text-slate-500">
+            {React.string(notes->Array.get(i)->Option.getWithDefault(""))}
+          </div>
+          // Anchored to the chip's outer edge, so it stays inside the panel
+          // whichever end of the word the letter is at.
+          {picking == Some(i)
+            ? <div
+                className={"absolute top-full z-20 mt-1 grid w-[360px] grid-cols-5 gap-2 rounded-lg bg-slate-900 p-2 shadow-2xl shadow-black ring-1 ring-white/10 " ++ (
+                  2 * i < letters->Array.length ? "left-0" : "right-0"
+                )}>
+                {Fingers.all
+                ->Array.map(f =>
+                  <Swatch
+                    key=f
+                    finger=f
+                    selected={f == finger}
+                    onClick={() => {
+                      onPick(i, f)
+                      setPicking(_ => None)
+                    }}
+                  />
+                )
+                ->React.array}
+              </div>
+            : React.null}
+        </div>
+      })
+      ->React.array}
+    </div>
+  }
+}
+
+// A word's fingering, editable. Save keeps it as a word entry; Reset drops the
+// entry so the word falls back to the default fingers and rules. Keyed by the
+// word's keys in the parent, so a new word starts with no edits.
 module Word = {
   @react.component
   let make = (
@@ -64,49 +124,18 @@ module Word = {
     ~onReset,
   ) => {
     let (edits, setEdits) = React.useState(() => None)
-    let (picking, setPicking) = React.useState(() => None)
     let fingers = edits->Option.getWithDefault(resolved->Array.map(fst))
     let changed = edits->Option.isSome && fingers != resolved->Array.map(fst)
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-2">
-        {letters
-        ->Array.mapWithIndex((ch, i) => {
-          let finger = fingers->Array.getUnsafe(i)
-          let edited = finger != fst(resolved->Array.getUnsafe(i))
-          <div key={Int.toString(i)} className="relative flex flex-col items-center gap-1">
-            <div className="text-3xl text-slate-100"> {React.string(ch)} </div>
-            <button
-              className="w-14 rounded px-1 py-1 text-[11px] text-slate-900"
-              style={ReactDOM.Style.make(~backgroundColor=fill(finger), ())}
-              onMouseDown={e => ReactEvent.Mouse.preventDefault(e)}
-              onClick={_ => setPicking(p => p == Some(i) ? None : Some(i))}>
-              {React.string(short(finger))}
-            </button>
-            <div className="text-[10px] text-slate-500">
-              {React.string(edited ? "edited" : sourceLabel(snd(resolved->Array.getUnsafe(i))))}
-            </div>
-            {picking == Some(i)
-              ? <div
-                  className="absolute top-full z-20 mt-1 grid w-[360px] grid-cols-5 gap-2 rounded-lg bg-slate-900 p-2 shadow-2xl shadow-black ring-1 ring-white/10">
-                  {Fingers.all
-                  ->Array.map(f =>
-                    <Swatch
-                      key=f
-                      finger=f
-                      selected={f == finger}
-                      onClick={() => {
-                        setEdits(_ => Some(fingers->Array.mapWithIndex((g, j) => j == i ? f : g)))
-                        setPicking(_ => None)
-                      }}
-                    />
-                  )
-                  ->React.array}
-                </div>
-              : React.null}
-          </div>
-        })
-        ->React.array}
-      </div>
+      <Chips
+        letters
+        fingers
+        notes={resolved->Array.mapWithIndex(((f, source), i) =>
+          fingers->Array.getUnsafe(i) != f ? "edited" : sourceLabel(source)
+        )}
+        onPick={(i, f) =>
+          setEdits(_ => Some(fingers->Array.mapWithIndex((g, j) => j == i ? f : g)))}
+      />
       <div className="flex gap-2">
         <button
           className="rounded bg-slate-700 px-3 py-1 text-slate-100 hover:bg-slate-600 disabled:opacity-40"
@@ -130,6 +159,126 @@ module Word = {
           }}>
           {React.string(hasEntry ? "Reset word" : "Undo edits")}
         </button>
+      </div>
+    </div>
+  }
+}
+
+// One word from the review queue: a word that still repeats a finger on two
+// different keys back to back. Answer it with the chips or a digit spelling
+// (1-4 and 7-0, "." to keep a finger), then Save it as an alternative, say it
+// has none, or skip it. Keyed by the word's keys in the parent.
+module Review = {
+  @react.component
+  let make = (
+    ~letters: array<string>,
+    ~keys: array<string>,
+    ~resolved: array<string>,
+    ~count: int,
+    ~left: int,
+    ~onAnswer: (string, array<string>) => unit,
+    ~onUndo: option<unit => unit>,
+  ) => {
+    let (edits, setEdits) = React.useState(() => None)
+    let (spelling, setSpelling) = React.useState(() => "")
+    let (error, setError) = React.useState(() => None)
+    let fingers = edits->Option.getWithDefault(resolved)
+    let changed = fingers != resolved
+    let pairs = Fingers.pairsUnder(keys, fingers)
+    let marked = letters->Array.mapWithIndex((_, i) =>
+      pairs->Array.some(((a, b)) => a == i || b == i)
+    )
+    let submit = () =>
+      if spelling->String.trim != "" {
+        switch Fingers.parseSpelling(spelling, resolved) {
+        | Ok(fingers) => onAnswer("alt", fingers)
+        | Error(message) => setError(_ => Some(message))
+        }
+      } else if changed {
+        onAnswer("alt", fingers)
+      } else {
+        onAnswer("none", [])
+      }
+    let button = (~label, ~primary=false, ~onClick, ()) =>
+      <button
+        className={"rounded px-3 py-1 " ++ (
+          primary ? "bg-slate-700 text-slate-100 hover:bg-slate-600" : "text-slate-300 hover:bg-slate-700"
+        )}
+        onMouseDown={e => ReactEvent.Mouse.preventDefault(e)}
+        onClick={_ => onClick()}>
+        {React.string(label)}
+      </button>
+    <div className="flex flex-col gap-4">
+      <div className="text-xs text-slate-400">
+        {React.string(
+          `${Int.toString(left)} word${left == 1 ? "" : "s"} left · this one comes up ${Int.toString(
+              count,
+            )}× in the corpus`,
+        )}
+      </div>
+      <Chips
+        letters
+        fingers
+        marked
+        notes={fingers->Array.mapWithIndex((f, i) => f != resolved->Array.getUnsafe(i) ? "edited" : "")}
+        onPick={(i, f) => {
+          setEdits(_ => Some(fingers->Array.mapWithIndex((g, j) => j == i ? f : g)))
+          setSpelling(_ => "")
+        }}
+      />
+      {changed && pairs->Array.length > 0
+        ? <div className="text-xs text-amber-300">
+            {React.string("That fingering still repeats a finger.")}
+          </div>
+        : React.null}
+      <div className="flex items-center gap-2">
+        <input
+          className="w-56 rounded bg-slate-900 px-3 py-2 tracking-[0.3em] text-slate-100 outline-none ring-1 ring-white/10 focus:ring-sky-400"
+          placeholder={"."->String.repeat(letters->Array.length)}
+          value=spelling
+          onChange={e => {
+            let v: string = ReactEvent.Form.target(e)["value"]
+            setSpelling(_ =>
+              v
+              ->String.split("")
+              ->Array.filter(ch => ch == "." || Fingers.codeOfDigit(ch)->Option.isSome)
+              ->Array.slice(~start=0, ~end=letters->Array.length)
+              ->Array.joinWith("")
+            )
+            setError(_ => None)
+          }}
+          onKeyDown={e =>
+            switch ReactEvent.Keyboard.key(e) {
+            | "Enter" =>
+              ReactEvent.Keyboard.preventDefault(e)
+              submit()
+            | "Escape" => ReactEvent.Keyboard.target(e)["blur"](.)
+            | _ => ()
+            }}
+        />
+        {button(
+          ~label=changed || spelling->String.trim != "" ? "Save (↵)" : "No alternative (↵)",
+          ~primary=true,
+          ~onClick=submit,
+          (),
+        )}
+        {changed || spelling->String.trim != ""
+          ? button(~label="No alternative", ~onClick=() => onAnswer("none", []), ())
+          : React.null}
+        {button(~label="Skip", ~onClick=() => onAnswer("skipped", []), ())}
+        {switch onUndo {
+        | Some(undo) => button(~label="Undo", ~onClick=undo, ())
+        | None => React.null
+        }}
+      </div>
+      {switch error {
+      | Some(message) => <div className="text-xs text-amber-300"> {React.string(message)} </div>
+      | None => React.null
+      }}
+      <div className="text-xs text-slate-500">
+        {React.string(
+          "1 2 3 4 = left pinky ring middle index · 7 8 9 0 = right index middle ring pinky · . = keep · empty = no alternative",
+        )}
       </div>
     </div>
   }
