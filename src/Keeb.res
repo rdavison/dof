@@ -1018,18 +1018,24 @@ let fingerColor = finger =>
   | _ => "241 245 249"
   }
 
-// Per-word orb trails, one per hand, or one per finger.
+// Orb trails, per word for each hand, or across the whole text for each finger.
 //
-// When a word comes up, each hand's (or finger's) keys in it are planned as one
+// Per hand: when a word comes up, each hand's keys in it are planned as one
 // hidden path: a point for one key, a pill for two, and for three or more a
 // smooth curve through every key in order. As the word is typed a glowing orb
 // runs along each path and the trail fills in behind it, so the lit part is
-// how far through the word that hand or finger has got. Hand trails take the
-// word's colour, finger trails their finger's.
+// how far through the word that hand has got. The trail takes the word's
+// colour and fades whenever typing stops. Each keystroke in the word refills
+// it to full and starts the fade over, but once it has faded out it is gone:
+// the next key in the word starts a fresh trail from there.
 //
-// The trail fades whenever typing stops. Each keystroke in the word refills it
-// to full and starts the fade over, but once it has faded out it is gone: the
-// next key in the word starts a fresh trail from there.
+// Per finger: each finger has one orb, in its colour, for the whole text. It
+// starts on the finger's home key and follows a smooth curve through every key
+// the finger presses, in order, then back home. Between two of its keys it
+// moves a little with every character typed, whoever types it, so it arrives
+// on each key as that key is typed and is home again at the end of the text.
+// A short tail shows where it has just been. Thumbs only ever press the space
+// bar, so they have no orb.
 //
 // Same-finger events get a glass "bump" that swells and fades: a pill joining
 // the two keys, for a same-finger bigram (two different keys pressed back to
@@ -1153,36 +1159,28 @@ module Trace = {
     }
   }
 
-  // One hand's or finger's keys in a word, in typing order, with the offset
-  // each is typed at. `finger` is the finger's two-letter code, or the hand's
-  // letter ("l" or "r") for a hand's trail.
-  type plan = {finger: string, keys: array<string>, offsets: array<int>}
+  // One hand's keys in a word, in typing order, with the offset each is typed
+  // at.
+  type plan = {keys: array<string>, offsets: array<int>}
 
-  // Split text[start..stop] by hand, or by finger, using the recorded
-  // fingering for the word, in the order each first comes up. A key pressed
-  // again straight away is the same stop on the path.
+  // Split text[start..stop] by hand, using the recorded fingering for the
+  // word. A key pressed again straight away is the same stop on the path.
   let planWord = (~charKey, text, start, stop) => {
-    let plans = []
+    let left = {keys: [], offsets: []}
+    let right = {keys: [], offsets: []}
     for i in start to stop {
       switch charKey->Dict.get(Fingering.charAt(text, i)) {
       | Some(keycode) =>
-        let finger = Fingering.at(~charKey, text, i, keycode)
-        let finger = trailsPerFinger.contents ? finger : finger->Js.String2.charAt(0)
-        let plan = switch plans->Array.find(p => p.finger == finger) {
-        | Some(p) => p
-        | None =>
-          let p = {finger, keys: [], offsets: []}
-          plans->Array.push(p)
-          p
-        }
-        if plan.keys->Array.get(plan.keys->Array.length - 1) != Some(keycode) {
-          plan.keys->Array.push(keycode)
-          plan.offsets->Array.push(i)
+        let hand =
+          Fingering.at(~charKey, text, i, keycode)->Js.String2.charAt(0) == "l" ? left : right
+        if hand.keys->Array.get(hand.keys->Array.length - 1) != Some(keycode) {
+          hand.keys->Array.push(keycode)
+          hand.offsets->Array.push(i)
         }
       | None => ()
       }
     }
-    plans
+    [left, right]
   }
 
   // Path segments through `points`: a Catmull-Rom spline written as cubic
@@ -1239,13 +1237,35 @@ module Trace = {
     mutable gone: bool,
   }
 
+  // One finger's orb across the whole text.
+  type glider = {
+    // the finger's stops, as (offset, centre): its home key before the text,
+    // each key it presses as that offset is typed, and home at the end
+    stops: array<(int, (float, float))>,
+    orb: svgElement,
+    tail: svgElement,
+    // the cursor offset the orb stands at, fractional while it moves, and the
+    // move under way: from, to, and when it began
+    mutable pos: float,
+    mutable from: float,
+    mutable target: float,
+    mutable began: option<float>,
+    // where the orb has just been, oldest first, with when
+    mutable trace: array<(float, float, float)>,
+    mutable frame: option<Webapi.rafId>,
+  }
+
+  type glide = {text: string, group: svgElement, gliders: array<glider>}
+
   // A board on the page: its root element, the character each key carries in
-  // its layout, the word traced on it, and its most recent keypresses of any
-  // kind, newest first, with the finger that pressed each.
+  // its layout, the word traced on it or the fingers gliding over it, and its
+  // most recent keypresses of any kind, newest first, with the finger that
+  // pressed each.
   type board = {
     root: Dom.Element.t,
     charKey: Dict.t<string>,
     mutable current: option<word>,
+    mutable glide: option<glide>,
     mutable history: array<(string, string)>,
   }
 
@@ -1272,6 +1292,25 @@ module Trace = {
       )
       board->Dom.Element.appendChild(~child=defs)
     }
+
+  // The head: a coloured ball, wider than the trail, around a white-hot core,
+  // at (x, y) in `group`.
+  let makeOrb = (group, (x, y), color) => {
+    let f = Float.toString
+    let orb = svg("g")
+    orb->Dom.Element.setAttribute("transform", `translate(${f(x)} ${f(y)})`)
+    orb->Dom.Element.setAttribute("filter", "url(#orb-glow)")
+    let ball = svg("circle")
+    ball->Dom.Element.setAttribute("r", "11")
+    ball->Dom.Element.setAttribute("fill", color)
+    orb->Dom.Element.appendChild(~child=ball)
+    let core = svg("circle")
+    core->Dom.Element.setAttribute("r", "5")
+    core->Dom.Element.setAttribute("fill", "white")
+    orb->Dom.Element.appendChild(~child=core)
+    group->Dom.Element.appendChild(~child=orb)
+    orb
+  }
 
   // `stroke` is the trail's CSS colour.
   let buildTrail = (root, board, group, plan, stroke) => {
@@ -1315,20 +1354,8 @@ module Trace = {
         })
         (Some(path), lengths, pieces)
       }
-      // the head: a coloured ball, wider than the trail, around a white-hot core
-      let orb = svg("g")
-      orb->Dom.Element.setAttribute("transform", `translate(${f(x0)} ${f(y0)})`)
-      orb->Dom.Element.setAttribute("filter", "url(#orb-glow)")
+      let orb = makeOrb(group, (x0, y0), stroke)
       orb->Dom.Element.setAttribute("opacity", "0")
-      let ball = svg("circle")
-      ball->Dom.Element.setAttribute("r", "11")
-      ball->Dom.Element.setAttribute("fill", stroke)
-      orb->Dom.Element.appendChild(~child=ball)
-      let core = svg("circle")
-      core->Dom.Element.setAttribute("r", "5")
-      core->Dom.Element.setAttribute("fill", "white")
-      orb->Dom.Element.appendChild(~child=core)
-      group->Dom.Element.appendChild(~child=orb)
       Some({offsets: plan.offsets, lengths, path, pieces, orb, reached: 0, drawn: 0., tail: tailPx, frame: None})
     | _ => None
     }
@@ -1341,13 +1368,7 @@ module Trace = {
       board->Dom.Element.appendChild(~child=group)
       let trails =
         planWord(~charKey=b.charKey, text, from, stop)->Array.filterMap(plan =>
-          buildTrail(
-            b.root,
-            board,
-            group,
-            plan,
-            trailsPerFinger.contents ? `rgb(${fingerColor(plan.finger)})` : c(color),
-          )
+          buildTrail(b.root, board, group, plan, c(color))
         )
       {
         text,
@@ -1443,15 +1464,191 @@ module Trace = {
     )
   }
 
-  // Drop the word on screen, so the next sync plans it afresh.
+  // Each finger's home key, where its orb rests before and after the text.
+  let homes = [
+    ("lp", "KeyA"),
+    ("lr", "KeyS"),
+    ("lm", "KeyD"),
+    ("li", "KeyF"),
+    ("ri", "KeyJ"),
+    ("rm", "KeyK"),
+    ("rr", "KeyL"),
+    ("rp", "Semicolon"),
+  ]
+
+  // Where a glider is at cursor offset `pos`: on the Catmull-Rom curve through
+  // its stops (as `segments` draws it), between the last stop at or before
+  // `pos` and the next, as far along as `pos` is between their offsets.
+  let pointAt = (stops, pos) => {
+    let n = stops->Array.length
+    let offset = i => Int.toFloat(fst(stops->Array.getUnsafe(i)))
+    let p = i => snd(stops->Array.getUnsafe(Js.Math.max_int(0, Js.Math.min_int(n - 1, i))))
+    let m = ref(0)
+    while m.contents < n - 1 && offset(m.contents + 1) <= pos {
+      m := m.contents + 1
+    }
+    let m = m.contents
+    // a key pressed again later: the orb waits there rather than looping
+    if m == n - 1 || p(m) == p(m + 1) {
+      p(m)
+    } else {
+      let t = Js.Math.max_float(0., (pos -. offset(m)) /. (offset(m + 1) -. offset(m)))
+      let (ax, ay) = p(m - 1)
+      let (bx, by) = p(m)
+      let (cx, cy) = p(m + 1)
+      let (dx, dy) = p(m + 2)
+      let c1x = bx +. (cx -. ax) /. 6.
+      let c1y = by +. (cy -. ay) /. 6.
+      let c2x = cx -. (dx -. bx) /. 6.
+      let c2y = cy -. (dy -. by) /. 6.
+      let u = 1. -. t
+      let bez = (a, b, c, d) =>
+        u *. u *. u *. a +. 3. *. u *. u *. t *. b +. 3. *. u *. t *. t *. c +. t *. t *. t *. d
+      (bez(bx, c1x, c2x, cx), bez(by, c1y, c2y, cy))
+    }
+  }
+
+  // The tail: the glider's recent positions as short strokes, full at the orb
+  // and fading to nothing `tailPx` back along the way it came, or `fadeMs`
+  // after it passed.
+  let drawTail = (g, now) => {
+    let f = Float.toString
+    // points past their fade are dropped, but the orb's own place is kept
+    let fresh = g.trace->Array.filter(((_, _, t)) => now -. t < Int.toFloat(fadeMs))
+    g.trace =
+      fresh->Array.length > 0 ? fresh : g.trace->Array.sliceToEnd(~start=g.trace->Array.length - 1)
+    g.tail->Dom.Element.setInnerHTML("")
+    let along = ref(0.)
+    let i = ref(g.trace->Array.length - 1)
+    while i.contents > 0 && along.contents < tailPx {
+      let (x1, y1, t1) = g.trace->Array.getUnsafe(i.contents)
+      let (x0, y0, _) = g.trace->Array.getUnsafe(i.contents - 1)
+      along := along.contents +. Js.Math.sqrt((x1 -. x0) *. (x1 -. x0) +. (y1 -. y0) *. (y1 -. y0))
+      let k =
+        Js.Math.max_float(0., 1. -. along.contents /. tailPx) *.
+        Js.Math.max_float(0., 1. -. (now -. t1) /. Int.toFloat(fadeMs))
+      if k > 0. {
+        let line = svg("line")
+        line->Dom.Element.setAttribute("x1", f(x0))
+        line->Dom.Element.setAttribute("y1", f(y0))
+        line->Dom.Element.setAttribute("x2", f(x1))
+        line->Dom.Element.setAttribute("y2", f(y1))
+        line->Dom.Element.setAttribute("stroke-linecap", "round")
+        line->Dom.Element.setAttribute("stroke-opacity", f(headOpacity *. k))
+        line->Dom.Element.setAttribute("stroke-width", f(tailWidth +. (headWidth -. tailWidth) *. k))
+        g.tail->Dom.Element.appendChild(~child=line)
+      }
+      i := i.contents - 1
+    }
+    // and so is what's out of the tail's reach
+    g.trace = g.trace->Array.sliceToEnd(~start=i.contents)
+  }
+
+  // Move the orb to `pos`, easing out over `traceMs`, and keep drawing the
+  // tail until it has faded.
+  let glideTo = (g, pos) =>
+    if pos != g.target {
+      g.from = g.pos
+      g.target = pos
+      g.began = None
+      if g.frame->Option.isNone {
+        let rec step = now => {
+          let t0 = switch g.began {
+          | Some(t0) => t0
+          | None =>
+            g.began = Some(now)
+            now
+          }
+          let k = Js.Math.min_float(1., (now -. t0) /. Float.fromInt(traceMs))
+          let eased = 1. -. Js.Math.pow_float(~base=1. -. k, ~exp=3.)
+          let moving = g.pos != g.target
+          if moving {
+            g.pos = k >= 1. ? g.target : g.from +. (g.target -. g.from) *. eased
+            let (x, y) = pointAt(g.stops, g.pos)
+            let f = Float.toString
+            g.orb->Dom.Element.setAttribute("transform", `translate(${f(x)} ${f(y)})`)
+            switch g.trace->Array.get(g.trace->Array.length - 1) {
+            | Some((px, py, _)) if px == x && py == y => ()
+            | _ => g.trace = g.trace->Array.concat([(x, y, now)])
+            }
+          }
+          drawTail(g, now)
+          g.frame =
+            moving || g.trace->Array.length > 1
+              ? Some(Webapi.requestCancellableAnimationFrame(step))
+              : None
+        }
+        g.frame = Some(Webapi.requestCancellableAnimationFrame(step))
+      }
+    }
+
+  // Plan every finger's stops through `text`, using the recorded fingering for
+  // each word, with each orb standing at `offset`.
+  let buildGlide = (b, text, ~offset) =>
+    layerIn(b.root, "traces")->Option.map(layer => {
+      ensureGlow(layer)
+      let group = svg("g")
+      layer->Dom.Element.appendChild(~child=group)
+      let at = code => keyIn(b.root, code)->Option.map(key => center(key, layer))
+      let last = text->String.length - 1
+      let uses = Dict.make()
+      for i in 0 to last {
+        switch b.charKey->Dict.get(Fingering.charAt(text, i)) {
+        | Some(keycode) =>
+          let finger = Fingering.at(~charKey=b.charKey, text, i, keycode)
+          switch (at(keycode), uses->Dict.get(finger)) {
+          | (Some(point), Some(stops)) => stops->Array.push((i, point))
+          | (Some(point), None) => uses->Dict.set(finger, [(i, point)])
+          | (None, _) => ()
+          }
+        | None => ()
+        }
+      }
+      let gliders = homes->Array.filterMap(((finger, home)) =>
+        at(home)->Option.map(home => {
+          let used = uses->Dict.get(finger)->Option.getWithDefault([])
+          let ends = switch used->Array.get(used->Array.length - 1) {
+          | Some((o, _)) if o >= last => []
+          | _ => [(last, home)]
+          }
+          let stops = [(-1, home)]->Array.concat(used)->Array.concat(ends)
+          let pos = Int.toFloat(offset)
+          let color = `rgb(${fingerColor(finger)})`
+          let tail = svg("g")
+          tail->Dom.Element.setAttribute("filter", "url(#trail-glow)")
+          tail->Dom.Element.setAttribute("stroke", color)
+          group->Dom.Element.appendChild(~child=tail)
+          let orb = makeOrb(group, pointAt(stops, pos), color)
+          {stops, orb, tail, pos, from: pos, target: pos, began: None, trace: [], frame: None}
+        })
+      )
+      {text, group, gliders}
+    })
+
+  // Drop the word or the gliders on screen, so the next sync plans them afresh.
   let forget = b => {
     b.current->Option.forEach(w => w.group->Dom.Element.remove)
     b.current = None
+    b.glide->Option.forEach(g => {
+      g.gliders->Array.forEach(g => g.frame->Option.forEach(Webapi.cancelAnimationFrame))
+      g.group->Dom.Element.remove
+    })
+    b.glide = None
   }
+
+  // Bring the finger orbs in line with the cursor.
+  let syncGlide = (b, ~text, ~offset) =>
+    switch b.glide {
+    | Some(g) if g.text == text =>
+      g.gliders->Array.forEach(g => glideTo(g, Int.toFloat(offset)))
+    | _ =>
+      forget(b)
+      b.glide = buildGlide(b, text, ~offset)
+    }
 
   // Bring the trails in line with the cursor: `offset` is the last character
   // typed in `text`, and `color` the colour of the word it is in.
-  let sync = (b, ~text, ~offset, ~color) => {
+  let syncWord = (b, ~text, ~offset, ~color) => {
     switch (b.current, wordAt(text, offset)) {
     | (Some(w), Some((start, stop))) if w.text == text && w.start == start && w.stop == stop =>
       if w.gone && offset != w.seen {
@@ -1479,6 +1676,13 @@ module Trace = {
       }
     })
   }
+
+  let sync = (b, ~text, ~offset, ~color) =>
+    if trailsPerFinger.contents {
+      syncGlide(b, ~text, ~offset)
+    } else {
+      syncWord(b, ~text, ~offset, ~color)
+    }
 
   // How a pane reads: `Glow` lights up, `Flash` lights up harder (the key a
   // bigram lands on), `Shadow` sinks into the board (a skipgram, the lesser sin).
@@ -1868,7 +2072,7 @@ module Boards = {
   let attach = (id, root, ansi) =>
     all->Dict.set(
       id,
-      {Trace.root, charKey: Fingering.keyMap(ansi), current: None, history: []},
+      {Trace.root, charKey: Fingering.keyMap(ansi), current: None, glide: None, history: []},
     )
 
   let detach = id => {
@@ -2997,12 +3201,12 @@ let default = (props: props) => {
     None
   }, [props.fingerings])
 
-  React.useEffect6(() => {
+  React.useEffect7(() => {
     if Trace.showTrails {
       Boards.each(b => Trace.sync(b, ~text, ~offset, ~color))
     }
     None
-  }, (text, offset, color, ansi, profileId, compared))
+  }, (text, offset, color, ansi, profileId, compared, trailsPerFinger))
 
   // React.useEffect1(() => {
   //   switch runState {
