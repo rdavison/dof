@@ -79,29 +79,21 @@ module Key = {
   module Nav = {
     @react.component
     let make = () => {
+      let arrow = (code, margin, glyph) =>
+        React.cloneElement(
+          <div
+            className={`text-xs ${margin} bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex`}>
+            <div className="m-auto"> {React.string(glyph)} </div>
+          </div>,
+          {"data-code": code},
+        )
       <div className="h-[60px] w-[188px] grid gap-0 grid-cols-3 grid-rows-2">
         <div />
-        <div
-          id="ArrowUp"
-          className={`text-xs my-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex`}>
-          <div className="m-auto"> {React.string("▲")} </div>
-        </div>
+        {arrow("ArrowUp", "my-[2px]", `▲`)}
         <div />
-        <div
-          id="ArrowLeft"
-          className={`text-xs mt-[2px] mr-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex`}>
-          <div className="m-auto"> {React.string("◀")} </div>
-        </div>
-        <div
-          id="ArrowDown"
-          className={`text-xs mt-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex`}>
-          <div className="m-auto"> {React.string("▼")} </div>
-        </div>
-        <div
-          id="ArrowRight"
-          className={`text-xs mt-[2px] ml-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex`}>
-          <div className="m-auto"> {React.string("▶")} </div>
-        </div>
+        {arrow("ArrowLeft", "mt-[2px] mr-[2px]", `◀`)}
+        {arrow("ArrowDown", "mt-[2px]", `▼`)}
+        {arrow("ArrowRight", "mt-[2px] ml-[2px]", `▶`)}
       </div>
     }
   }
@@ -148,14 +140,13 @@ module Key = {
     }
     let key =
       <div
-        id
         className={`${shape} m-[2px] bg-slate-900 hover:bg-slate-100 transition-colors rounded-lg shadow-2xl shadow-slate-700 text-white ease-out hover:duration-75 duration-[2000ms] hover:text-slate-900 items-center flex${editing}`}
         onPointerDown=?{edit->Option.map(e => ev => e.onPointerDown(id, ev))}>
         <div className="m-auto"> {label} </div>
       </div>
     switch edit {
-    | Some(_) => React.cloneElement(key, {"data-key": id})
-    | None => key
+    | Some(_) => React.cloneElement(key, {"data-code": id, "data-key": id})
+    | None => React.cloneElement(key, {"data-code": id})
     }
   }
 }
@@ -735,8 +726,13 @@ let c = c =>
   | #red => "rgb(239 68 68)"
   }
 
-let sim = (keycode, color) => {
-  switch document->Webapi.Dom.Document.getElementById(keycode) {
+// Keys are marked with their KeyboardEvent code, and the animation layers
+// with their name, so each board on the page finds its own.
+let keyIn = (root, code) => root->Webapi.Dom.Element.querySelector(`[data-code="${code}"]`)
+let layerIn = (root, name) => root->Webapi.Dom.Element.querySelector(`[data-layer="${name}"]`)
+
+let sim = (root, keycode, color) => {
+  switch keyIn(root, keycode) {
   | None => ()
   | Some(element) =>
     // Js.log2("down", keycode)
@@ -773,8 +769,8 @@ let delay = timeout => {
   })
 }
 
-let runKeycode = (keycode, color) => {
-  sim(keycode, color)
+let runKeycode = (root, keycode, color) => {
+  sim(root, keycode, color)
   switch keycode {
   | "Space" => delay(200)
   | _ => delay(50)
@@ -908,11 +904,6 @@ module Fingering = {
     d
   }
 
-  // The map for the layout on the board.
-  let charKey = ref(keyMap(Ansi.amaranth))
-
-  let setLayout = board => charKey := keyMap(board)
-
   // Only "alt" entries carry a fingering; "none" means the default is the only
   // way to type the word, which is what a lookup miss already yields.
   let table: ref<Dict.t<array<string>>> = ref(Dict.make())
@@ -960,7 +951,7 @@ module Fingering = {
   let charAt = (text, i) =>
     i < 0 || i >= text->String.length ? "" : text->Js.String2.charAt(i)->String.toLowerCase
 
-  let wordAround = (text, offset) => {
+  let wordAround = (~charKey, text, offset) => {
     if !isWordChar(charAt(text, offset)) {
       None
     } else {
@@ -983,7 +974,7 @@ module Fingering = {
       } else {
         let keys = []
         for i in start.contents to stop.contents {
-          switch charKey.contents->Dict.get(charAt(text, i)) {
+          switch charKey->Dict.get(charAt(text, i)) {
           | Some(keycode) => keys->Array.push(keycode)
           | None => ()
           }
@@ -997,8 +988,8 @@ module Fingering = {
 
   // The finger that actually presses the key at `offset`, consulting the
   // recorded fingering for the word it sits in.
-  let at = (text, offset, keycode) =>
-    switch wordAround(text, offset) {
+  let at = (~charKey, text, offset, keycode) =>
+    switch wordAround(~charKey, text, offset) {
     | Some(keys, i) =>
       switch forKeys(keys)->Array.get(i) {
       | Some(f) => f
@@ -1107,10 +1098,6 @@ module Trace = {
 
   type color = [#red | #yellow1 | #green | #blue | #indigo | #white]
 
-  // the most recent keypresses of any kind, newest first, with the finger
-  // that pressed each
-  let history: ref<array<(string, string)>> = ref([])
-
   let center = (element, origin) => {
     let r = element->Dom.Element.getBoundingClientRect
     let o = origin->Dom.Element.getBoundingClientRect
@@ -1157,13 +1144,14 @@ module Trace = {
 
   // Split text[start..stop] by hand, using the recorded fingering for the
   // word. A key pressed again straight away is the same stop on the path.
-  let planWord = (text, start, stop) => {
+  let planWord = (~charKey, text, start, stop) => {
     let left = {keys: [], offsets: []}
     let right = {keys: [], offsets: []}
     for i in start to stop {
-      switch Fingering.charKey.contents->Dict.get(Fingering.charAt(text, i)) {
+      switch charKey->Dict.get(Fingering.charAt(text, i)) {
       | Some(keycode) =>
-        let hand = Fingering.at(text, i, keycode)->Js.String2.charAt(0) == "l" ? left : right
+        let hand =
+          Fingering.at(~charKey, text, i, keycode)->Js.String2.charAt(0) == "l" ? left : right
         if hand.keys->Array.get(hand.keys->Array.length - 1) != Some(keycode) {
           hand.keys->Array.push(keycode)
           hand.offsets->Array.push(i)
@@ -1228,7 +1216,15 @@ module Trace = {
     mutable gone: bool,
   }
 
-  let current: ref<option<word>> = ref(None)
+  // A board on the page: its root element, the character each key carries in
+  // its layout, the word traced on it, and its most recent keypresses of any
+  // kind, newest first, with the finger that pressed each.
+  type board = {
+    root: Dom.Element.t,
+    charKey: Dict.t<string>,
+    mutable current: option<word>,
+    mutable history: array<(string, string)>,
+  }
 
   // The orb's and the trail's glows, defined once per board. The trail's
   // region is in board units because a near-straight trail has almost no
@@ -1254,8 +1250,9 @@ module Trace = {
       board->Dom.Element.appendChild(~child=defs)
     }
 
-  let buildTrail = (board, group, plan, color) => {
-    let points = plan.keys->Array.filterMap(k => byId(k)->Option.map(key => center(key, board)))
+  let buildTrail = (root, board, group, plan, color) => {
+    let points =
+      plan.keys->Array.filterMap(k => keyIn(root, k)->Option.map(key => center(key, board)))
     switch points->Array.get(0) {
     | Some((x0, y0)) if points->Array.length == plan.keys->Array.length =>
       let f = Float.toString
@@ -1313,13 +1310,15 @@ module Trace = {
     }
   }
 
-  let build = (text, start, stop, ~from, color) =>
-    byId("Traces")->Option.map(board => {
+  let build = (b, text, start, stop, ~from, color) =>
+    layerIn(b.root, "traces")->Option.map(board => {
       ensureGlow(board)
       let group = svg("g")
       board->Dom.Element.appendChild(~child=group)
       let trails =
-        planWord(text, from, stop)->Array.filterMap(plan => buildTrail(board, group, plan, color))
+        planWord(~charKey=b.charKey, text, from, stop)->Array.filterMap(plan =>
+          buildTrail(b.root, board, group, plan, color)
+        )
       {
         text,
         start,
@@ -1415,20 +1414,20 @@ module Trace = {
   }
 
   // Drop the word on screen, so the next sync plans it afresh.
-  let forget = () => {
-    current.contents->Option.forEach(w => w.group->Dom.Element.remove)
-    current := None
+  let forget = b => {
+    b.current->Option.forEach(w => w.group->Dom.Element.remove)
+    b.current = None
   }
 
   // Bring the trails in line with the cursor: `offset` is the last character
   // typed in `text`, and `color` the colour of the word it is in.
-  let sync = (~text, ~offset, ~color) => {
-    switch (current.contents, wordAt(text, offset)) {
+  let sync = (b, ~text, ~offset, ~color) => {
+    switch (b.current, wordAt(text, offset)) {
     | (Some(w), Some((start, stop))) if w.text == text && w.start == start && w.stop == stop =>
       if w.gone && offset != w.seen {
         // faded out mid-word: a fresh trail from the key just typed
         let from = Js.Math.max_int(start, offset)
-        current := build(text, start, stop, ~from, color)
+        b.current = build(b, text, start, stop, ~from, color)
       }
     | (old, span) =>
       // a word left behind keeps fading from its last keystroke
@@ -1437,9 +1436,10 @@ module Trace = {
           w.group->Dom.Element.remove
         }
       )
-      current := span->Option.flatMap(((start, stop)) => build(text, start, stop, ~from=start, color))
+      b.current =
+        span->Option.flatMap(((start, stop)) => build(b, text, start, stop, ~from=start, color))
     }
-    current.contents->Option.forEach(w => {
+    b.current->Option.forEach(w => {
       w.trails->Array.forEach(t => goto(t, t.offsets->Array.filter(o => o <= offset)->Array.length))
       if offset != w.seen {
         w.seen = offset
@@ -1512,8 +1512,8 @@ module Trace = {
     "fill": "forwards",
   }
 
-  let bumpKey = (~intensity, keycode, color) => {
-    switch (byId("Bumps"), byId(keycode)) {
+  let bumpKey = (root, ~intensity, keycode, color) => {
+    switch (layerIn(root, "bumps"), keyIn(root, keycode)) {
     | (Some(layer), Some(key)) =>
       let r = key->Dom.Element.getBoundingClientRect
       let (x, y) = center(key, layer)
@@ -1537,8 +1537,8 @@ module Trace = {
     }
   }
 
-  let bumpLine = (~look, ~intensity, src, dst, color) => {
-    switch (byId("Bumps"), byId(src), byId(dst)) {
+  let bumpLine = (root, ~look, ~intensity, src, dst, color) => {
+    switch (layerIn(root, "bumps"), keyIn(root, src), keyIn(root, dst)) {
     | (Some(layer), Some(a), Some(b)) =>
       let (x1, y1) = center(a, layer)
       let (x2, y2) = center(b, layer)
@@ -1572,13 +1572,13 @@ module Trace = {
   // `Fingering.at`, so a word's recorded alternate fingering counts.
   let sameFinger = ((a, fingerA), (b, fingerB)) => a != b && isAlpha(a) && fingerA == fingerB
 
-  let reset = () => {
-    history := []
+  let reset = b => {
+    b.history = []
   }
 
   // How far apart two keys are on the board, in key widths.
-  let distance = (src, dst) =>
-    switch (byId(src), byId(dst)) {
+  let distance = (root, src, dst) =>
+    switch (keyIn(root, src), keyIn(root, dst)) {
     | (Some(a), Some(b)) =>
       let (x, y) = center(a, b)
       let (bx, by) = center(b, b)
@@ -1588,33 +1588,33 @@ module Trace = {
 
   // How hard a bump between `src` and `dst` shows: the finger's speed, the
   // distance it covers in `beats` keypresses, times the weight, up to 4.
-  let intensity = (src, dst, ~beats) =>
-    Js.Math.min_float(4., sameFingerWeight.contents *. distance(src, dst) /. beats)
+  let intensity = (root, src, dst, ~beats) =>
+    Js.Math.min_float(4., sameFingerWeight.contents *. distance(root, src, dst) /. beats)
 
   // `finger` is the two-letter code of the finger that really presses this key,
   // which is the default for the key unless the word has a recorded alternate.
-  let press = (keycode, color: color, ~finger) => {
+  let press = (b, keycode, color: color, ~finger) => {
     let key = (keycode, finger)
     if isAlpha(keycode) {
-      switch history.contents->Array.get(0) {
+      switch b.history->Array.get(0) {
       | Some((prev, _) as p) if sameFinger(p, key) =>
-        let intensity = intensity(prev, keycode, ~beats=1.)
+        let intensity = intensity(b.root, prev, keycode, ~beats=1.)
         if intensity > 0. {
-          bumpLine(~look=Glow, ~intensity, prev, keycode, color)
-          bumpKey(~intensity, keycode, color)
+          bumpLine(b.root, ~look=Glow, ~intensity, prev, keycode, color)
+          bumpKey(b.root, ~intensity, keycode, color)
         }
       | _ => ()
       }
-      switch history.contents->Array.get(1) {
+      switch b.history->Array.get(1) {
       | Some((src, _) as s) if sameFinger(s, key) =>
-        let intensity = intensity(src, keycode, ~beats=2.)
+        let intensity = intensity(b.root, src, keycode, ~beats=2.)
         if intensity > 0. {
-          bumpLine(~look=Shadow, ~intensity, src, keycode, color)
+          bumpLine(b.root, ~look=Shadow, ~intensity, src, keycode, color)
         }
       | _ => ()
       }
     }
-    history := [key]->Array.concat(history.contents->Array.slice(~start=0, ~end=1))
+    b.history = [key]->Array.concat(b.history->Array.slice(~start=0, ~end=1))
   }
 }
 
@@ -1670,10 +1670,10 @@ let zoneEven = 0.35
 // radial gradient is centred on the pressed key, so the panes together read
 // as one light. They screen-blend, lighting the dark key without washing out
 // its label. With falloff off, every pane gets the same flat tint.
-let flashFinger = (finger, ~from) =>
+let flashFinger = (root, finger, ~from) =>
   if showFingerZones.contents {
     module Dom = Webapi.Dom
-    switch (Trace.byId("Zones"), Trace.byId(from)) {
+    switch (layerIn(root, "zones"), keyIn(root, from)) {
     | (Some(layer), Some(source)) =>
       let f = Float.toString
       let (sx, sy) = Trace.center(source, layer)
@@ -1687,7 +1687,7 @@ let flashFinger = (finger, ~from) =>
         ->Array.concat([`transparent ${f(6. *. zoneReach)}px`])
         ->Array.joinWith(", ")
       fingerKeys(finger)->Array.forEach(code =>
-        switch Trace.byId(code) {
+        switch keyIn(root, code) {
         | Some(key) =>
           let r = key->Dom.Element.getBoundingClientRect
           let (x, y) = Trace.center(key, layer)
@@ -1768,7 +1768,7 @@ let nextColor = {
   }
 }
 
-let runText = (text, setOffset) => {
+let runText = (root, text, setOffset) => {
   let data = {
     let text = text->String.split("")->Array.map(x => Some(x))
     let a = [None]->Array.concat(text)
@@ -1835,9 +1835,43 @@ let runText = (text, setOffset) => {
   data->Array.reduceWithIndex(Promise.resolve(), (p, (kcCurr, color), i) => {
     p->Promise.then(() => {
       setOffset(_ => i)
-      runKeycode(kcCurr, color)
+      runKeycode(root, kcCurr, color)
     })
   })
+}
+
+// The boards on the page, each animating every correct keypress on the key
+// that carries the character in its own layout: "main", the board typed on,
+// and any layouts being compared, by layout id.
+module Boards = {
+  let all: Dict.t<Trace.board> = Dict.make()
+
+  let attach = (id, root, ansi) =>
+    all->Dict.set(
+      id,
+      {Trace.root, charKey: Fingering.keyMap(ansi), current: None, history: []},
+    )
+
+  let detach = id => {
+    all->Dict.get(id)->Option.forEach(Trace.forget)
+    all->Dict.delete(id)
+  }
+
+  let main = () => all->Dict.get("main")
+
+  let each = f => all->Dict.valuesToArray->Array.forEach(f)
+
+  // The key carrying `char` on a board.
+  let keyFor = (b: Trace.board, char) =>
+    char == " " ? Some("Space") : b.charKey->Dict.get(char->String.toLowerCase)
+
+  // Light up `keycode` on `b` as the character at `offset` in `text`.
+  let press = (b: Trace.board, text, offset, keycode, color) => {
+    let finger = Fingering.at(~charKey=b.charKey, text, offset, keycode)
+    sim(b.root, keycode, color)
+    flashFinger(b.root, finger, ~from=keycode)
+    Trace.press(b, keycode, color, ~finger)
+  }
 }
 
 module Keyboard = {
@@ -1910,7 +1944,7 @@ module Keyboard = {
         | "F11"
         | "F12"
         | "Tab" =>
-          Trace.reset()
+          Boards.each(Trace.reset)
           setState(((_offset, _text, color, _highlightColor)) => {
             let offset = -1
             let text = nextText()
@@ -1931,7 +1965,7 @@ module Keyboard = {
         | "Minus" => selectLayer(ansi.hyphen)
         | "Equal" => selectLayer(ansi.equal)
         | "Backspace" =>
-          Trace.reset()
+          Boards.each(Trace.reset)
           setState(((offset, text, color, highlightColor)) => {
             let offset = offset > -1 ? offset - 1 : -1
             (offset, text, color, highlightColor)
@@ -1995,7 +2029,8 @@ module Keyboard = {
       // carries it on the board.
       let key = Webapi.Dom.KeyboardEvent.key(ev)
       if key->String.length == 1 {
-        let onBoard = Fingering.charKey.contents->Dict.get(key->String.toLowerCase)
+        let onBoard =
+          Boards.main()->Option.flatMap(b => b.charKey->Dict.get(key->String.toLowerCase))
         (onBoard->Option.getWithDefault(code), Some(key))
       } else {
         (code, None)
@@ -2014,10 +2049,14 @@ module Keyboard = {
           } else {
             color
           }
-          let finger = Fingering.at(text, offset, kc)
-          sim(kc, color)
-          flashFinger(finger, ~from=kc)
-          Trace.press(kc, color, ~finger)
+          Boards.all
+          ->Dict.toArray
+          ->Array.forEach(((id, b)) =>
+            switch id == "main" ? Some(kc) : Boards.keyFor(b, char) {
+            | Some(keycode) => Boards.press(b, text, offset, keycode, color)
+            | None => ()
+            }
+          )
           (i + 1, text, color, #white)
         } else {
           (i + 1, text, color, #red)
@@ -2134,7 +2173,7 @@ module Keyboard = {
   // Anything extra goes in as children, positioned against the same wrapper.
   module Grid = {
     @react.component
-    let make = (~t: t, ~children: React.element=React.null) =>
+    let make = (~t: t, ~rootRef: option<ReactDOM.domRef>=?, ~children: React.element=React.null) =>
       switch t {
       | #Ansi({
           tilde,
@@ -2191,7 +2230,8 @@ module Keyboard = {
           slash,
           right_shift,
         }) =>
-        <div className="relative p-[6px] bg-slate-700 rounded-2xl shadow-lg shadow-black">
+        <div
+          ref=?rootRef className="relative p-[6px] bg-slate-700 rounded-2xl shadow-lg shadow-black">
           <div className="flex flex-col">
             <div className="flex flex-row">
               <Key id="Escape" label={["esc"]} shape={#_1_5} />
@@ -2281,18 +2321,27 @@ module Keyboard = {
               <Key.Nav />
             </div>
           </div>
-          <div id="Zones" className="absolute inset-0 pointer-events-none" />
-          <svg id="Traces" className="absolute inset-0 w-full h-full pointer-events-none" />
-          <div id="Bumps" className="absolute inset-0 pointer-events-none" />
+          {React.cloneElement(
+            <div className="absolute inset-0 pointer-events-none" />,
+            {"data-layer": "zones"},
+          )}
+          {React.cloneElement(
+            <svg className="absolute inset-0 w-full h-full pointer-events-none" />,
+            {"data-layer": "traces"},
+          )}
+          {React.cloneElement(
+            <div className="absolute inset-0 pointer-events-none" />,
+            {"data-layer": "bumps"},
+          )}
           children
         </div>
       }
   }
 
   @react.component
-  let make = (~t: t, ~input, ~setState, ~nextText) => {
+  let make = (~t: t, ~input, ~setState, ~nextText, ~rootRef=?) => {
     useListener(t, ~input, ~setState, ~nextText)
-    <Grid t />
+    <Grid t ?rootRef />
   }
 }
 
@@ -2342,6 +2391,23 @@ type draft = {
 @val @scope(("navigator", "clipboard"))
 external writeText: string => Js.Promise.t<unit> = "writeText"
 
+// A layout stacked under the main board for comparison. It animates the same
+// keypresses on its own keys, and isn't typed on or edited.
+module Compared = {
+  @react.component
+  let make = (~id, ~name, ~ansi) => {
+    let root = React.useRef(Js.Nullable.null)
+    React.useEffect2(() => {
+      root.current->Js.Nullable.toOption->Option.forEach(el => Boards.attach(id, el, ansi))
+      Some(() => Boards.detach(id))
+    }, (id, ansi))
+    <div className="flex flex-col gap-2">
+      <div className="font-mono text-sm text-slate-700"> {React.string(name)} </div>
+      <Keyboard.Grid t={#Ansi(ansi)} rootRef={ReactDOM.Ref.domRef(root)} />
+    </div>
+  }
+}
+
 let default = (props: props) => {
   let quotes = props.corpus.quotes
   let nextText = () => {
@@ -2380,6 +2446,12 @@ let default = (props: props) => {
   | Some(d) => d.board
   | None => layout.board
   }
+
+  // Layouts stacked under the main board, by id.
+  let (compared, setCompared) = React.useState(() => [])
+  let comparedLayouts =
+    allLayouts->Array.filter(l => l.id != layoutId && compared->Array.includes(l.id))
+  let mainRoot = React.useRef(Js.Nullable.null)
 
   let (toast, setToast) = React.useState(() => None)
   let (importing, setImporting) = React.useState(() => false)
@@ -2499,6 +2571,16 @@ let default = (props: props) => {
     | Some("Passthru") => setInput(_ => Passthru)
     | _ => ()
     }
+    switch remembered("compare")->Option.flatMap(text =>
+      try {
+        Js.Json.parseExn(text)->Js.Json.decodeArray
+      } catch {
+      | _ => None
+      }
+    ) {
+    | Some(ids) => setCompared(_ => ids->Array.filterMap(Js.Json.decodeString))
+    | None => ()
+    }
     switch remembered("fingerZones") {
     | Some("off") => setFingerZones(_ => false)
     | _ => ()
@@ -2537,10 +2619,14 @@ let default = (props: props) => {
   // Typing and trails read characters off the layout on the board, which an
   // edit changes without changing the layout's id.
   React.useEffect1(() => {
-    Fingering.setLayout(ansi)
-    Trace.forget()
-    None
+    mainRoot.current->Js.Nullable.toOption->Option.forEach(el => Boards.attach("main", el, ansi))
+    Some(() => Boards.detach("main"))
   }, [ansi])
+
+  React.useEffect1(() => {
+    remember("compare", Js.Json.stringifyAny(compared)->Option.getWithDefault("[]"))
+    None
+  }, [compared])
 
   React.useEffect1(() => {
     remember("layout", layoutId)
@@ -2710,7 +2796,7 @@ let default = (props: props) => {
   // Trails and bumps ask the profile which finger presses each key.
   React.useEffect1(() => {
     Fingering.setProfile(profileId)
-    Trace.forget()
+    Boards.each(Trace.forget)
     remember("fingermap", profileId)
     None
   }, [profileId])
@@ -2737,6 +2823,35 @@ let default = (props: props) => {
             hint: isCustom(l.id) ? "custom" : "",
             checked: l.id == layoutId,
             action: Run(() => setLayoutId(_ => l.id)),
+          }),
+        }),
+      },
+      {
+        label: "Compare with…",
+        hint: switch comparedLayouts->Array.length {
+        | 0 => "off"
+        | 1 => "1 layout"
+        | n => `${Int.toString(n)} layouts`
+        },
+        checked: false,
+        action: Open({
+          title: "Compare with",
+          placeholder: "Choose layouts to stack below…",
+          items: allLayouts
+          ->Array.filter(l => l.id != layoutId)
+          ->Array.map(l => {
+            let on = compared->Array.includes(l.id)
+            {
+              Palette.label: l.name,
+              hint: isCustom(l.id) ? "custom" : "",
+              checked: on,
+              action: Run(() => {
+                setCompared(ids =>
+                  on ? ids->Array.filter(id => id != l.id) : ids->Array.concat([l.id])
+                )
+                setToast(_ => Some(on ? `Stopped comparing ${l.name}` : `Comparing with ${l.name}`))
+              }),
+            }
           }),
         }),
       },
@@ -2840,12 +2955,12 @@ let default = (props: props) => {
     None
   }, [props.fingerings])
 
-  React.useEffect5(() => {
+  React.useEffect6(() => {
     if Trace.showTrails {
-      Trace.sync(~text, ~offset, ~color)
+      Boards.each(b => Trace.sync(b, ~text, ~offset, ~color))
     }
     None
-  }, (text, offset, color, ansi, profileId))
+  }, (text, offset, color, ansi, profileId, compared))
 
   // React.useEffect1(() => {
   //   switch runState {
@@ -2859,8 +2974,10 @@ let default = (props: props) => {
 
   // Back to the start of the passage: the same text, nothing typed yet.
   let rewind = () => {
-    Trace.reset()
-    Trace.forget()
+    Boards.each(b => {
+      Trace.reset(b)
+      Trace.forget(b)
+    })
     setState(((_offset, text, color, _highlightColor)) => (-1, text, color, #white))
   }
 
@@ -2879,83 +2996,93 @@ let default = (props: props) => {
     </button>
 
   <div className="flex bg-b flex-col gap-8 w-[942px]">
-    {switch draft {
-    | Some(d) =>
-      <div className="flex items-center gap-3 font-mono text-sm text-slate-700">
-        <span> {React.string("Editing")} </span>
-        <input
-          className="w-56 rounded bg-slate-800 px-2 py-1 text-slate-100 outline-none ring-1 ring-white/10 focus:ring-sky-400"
-          value=d.name
-          placeholder="Layout name"
-          onChange={e => {
-            let name = ReactEvent.Form.target(e)["value"]
-            editDraft(d => {...d, name})
-          }}
-          onKeyDown={e =>
-            switch ReactEvent.Keyboard.key(e) {
-            | "Enter" => save()
-            | "Escape" => ReactEvent.Keyboard.target(e)["blur"](.)
-            | _ => ()
+    // The passage stays in view while compared boards scroll by under it.
+    <div className="sticky top-0 z-10 flex flex-col gap-8 bg-slate-400 py-4">
+      {switch draft {
+      | Some(d) =>
+        <div className="flex items-center gap-3 font-mono text-sm text-slate-700">
+          <span> {React.string("Editing")} </span>
+          <input
+            className="w-56 rounded bg-slate-800 px-2 py-1 text-slate-100 outline-none ring-1 ring-white/10 focus:ring-sky-400"
+            value=d.name
+            placeholder="Layout name"
+            onChange={e => {
+              let name = ReactEvent.Form.target(e)["value"]
+              editDraft(d => {...d, name})
             }}
-        />
-        <span className="whitespace-nowrap text-xs text-slate-600">
-          {React.string("drag to swap · click to edit")}
-        </span>
-        <div className="ml-auto flex gap-2">
-          {button(~label="Save", ~onClick=save, ~disabled=d.name->String.trim == "", ())}
-          {button(~label="Export", ~onClick=exportLayout, ())}
-          {d.saved != None ? button(~label="Delete", ~onClick=delete, ~danger=true, ()) : React.null}
-          {button(~label="Close", ~onClick=close, ())}
+            onKeyDown={e =>
+              switch ReactEvent.Keyboard.key(e) {
+              | "Enter" => save()
+              | "Escape" => ReactEvent.Keyboard.target(e)["blur"](.)
+              | _ => ()
+              }}
+          />
+          <span className="whitespace-nowrap text-xs text-slate-600">
+            {React.string("drag to swap · click to edit")}
+          </span>
+          <div className="ml-auto flex gap-2">
+            {button(~label="Save", ~onClick=save, ~disabled=d.name->String.trim == "", ())}
+            {button(~label="Export", ~onClick=exportLayout, ())}
+            {d.saved != None ? button(~label="Delete", ~onClick=delete, ~danger=true, ()) : React.null}
+            {button(~label="Close", ~onClick=close, ())}
+          </div>
         </div>
-      </div>
-    | None =>
-      <div className="flex justify-end gap-3 font-mono text-sm text-slate-700">
-        <span>
-          {React.string(
-            [layout.name, inputName(input)->String.toLowerCase, profile.name]->Array.joinWith(
-              " · ",
-            ),
-          )}
-        </span>
-        <span className="text-slate-600"> {React.string("esc for commands")} </span>
-      </div>
-    }}
-    <div className="relative">
-      <button
-        className="w-full bg-slate-800 p-6 pr-12 rounded-xl shadow-2xl text-3xl font-mono text-white"
-        onClick={_ => setRunState(_ => #Running)}
-        disabled={runState == #Running}>
-        {React.array(
-          text
-          ->String.split("")
-          ->Array.mapWithIndex((char, i) => {
-            let className = {
-              if i <= offset {
-                switch highlightColor {
-                | #white => "text-slate-100"
-                | #red => "text-red-500"
+      | None =>
+        <div className="flex justify-end gap-3 font-mono text-sm text-slate-700">
+          <span>
+            {React.string(
+              [layout.name, inputName(input)->String.toLowerCase, profile.name]->Array.joinWith(
+                " · ",
+              ),
+            )}
+          </span>
+          <span className="text-slate-600"> {React.string("esc for commands")} </span>
+        </div>
+      }}
+      <div className="relative">
+        <button
+          className="w-full bg-slate-800 p-6 pr-12 rounded-xl shadow-2xl text-3xl font-mono text-white"
+          onClick={_ => setRunState(_ => #Running)}
+          disabled={runState == #Running}>
+          {React.array(
+            text
+            ->String.split("")
+            ->Array.mapWithIndex((char, i) => {
+              let className = {
+                if i <= offset {
+                  switch highlightColor {
+                  | #white => "text-slate-100"
+                  | #red => "text-red-500"
+                  }
+                } else {
+                  "text-slate-600"
                 }
-              } else {
-                "text-slate-600"
               }
-            }
-            <span className> {React.string(char)} </span>
-          }),
-        )}
-      </button>
-      <button
-        className="absolute right-2 top-2 rounded px-2 text-xl text-slate-500 hover:bg-slate-700 hover:text-slate-100 disabled:opacity-0"
-        title="Rewind to the start"
-        ariaLabel="Rewind to the start"
-        disabled={offset == -1}
-        onMouseDown={e => ReactEvent.Mouse.preventDefault(e)}
-        onClick={_ => rewind()}>
-        {React.string(`↺`)}
-      </button>
+              <span className> {React.string(char)} </span>
+            }),
+          )}
+        </button>
+        <button
+          className="absolute right-2 top-2 rounded px-2 text-xl text-slate-500 hover:bg-slate-700 hover:text-slate-100 disabled:opacity-0"
+          title="Rewind to the start"
+          ariaLabel="Rewind to the start"
+          disabled={offset == -1}
+          onMouseDown={e => ReactEvent.Mouse.preventDefault(e)}
+          onClick={_ => rewind()}>
+          {React.string(`↺`)}
+        </button>
+      </div>
     </div>
     <Editor.Provider value=editor>
-      <Keyboard t={#Ansi(ansi)} input setState nextText />
+      <Keyboard
+        t={#Ansi(ansi)} input setState nextText rootRef={ReactDOM.Ref.domRef(mainRoot)}
+      />
     </Editor.Provider>
+    {draft->Option.isNone
+      ? comparedLayouts
+        ->Array.map(l => <Compared key=l.id id=l.id name=l.name ansi=l.board />)
+        ->React.array
+      : React.null}
     {switch drag {
     | Some(d) if d.moved =>
       <Editor.Ghost at=d.at label={Ansi.labelsOf(ansi, d.code)->Option.getWithDefault([])} />
