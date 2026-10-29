@@ -1007,13 +1007,25 @@ type animation = Dom.animation
 @send external getPointAtLength: (svgElement, float) => svgPoint = "getPointAtLength"
 @send external cancelAnimation: animation => unit = "cancel"
 
-// Per-word, per-hand orb trails.
+// Each finger's colour, the same on both hands: index amber, middle emerald,
+// ring sky, pinky violet. `finger` is a two-letter code such as "ri".
+let fingerColor = finger =>
+  switch finger->Js.String2.charAt(1) {
+  | "i" => "251 191 36"
+  | "m" => "52 211 153"
+  | "r" => "56 189 248"
+  | "p" => "167 139 250"
+  | _ => "241 245 249"
+  }
+
+// Per-word orb trails, one per hand, or one per finger.
 //
-// When a word comes up, each hand's keys in it are planned as one hidden path:
-// a point for one key, a pill for two, and for three or more a smooth curve
-// through every key in order. As the word is typed a glowing orb runs along
-// each hand's path and the trail fills in behind it, so the lit part is how
-// far through the word that hand has got.
+// When a word comes up, each hand's (or finger's) keys in it are planned as one
+// hidden path: a point for one key, a pill for two, and for three or more a
+// smooth curve through every key in order. As the word is typed a glowing orb
+// runs along each path and the trail fills in behind it, so the lit part is
+// how far through the word that hand or finger has got. Hand trails take the
+// word's colour, finger trails their finger's.
 //
 // The trail fades whenever typing stops. Each keystroke in the word refills it
 // to full and starts the fade over, but once it has faded out it is gone: the
@@ -1032,6 +1044,9 @@ module Trace = {
 
   // Set false to hide trails so the same-finger bumps read on their own.
   let showTrails = true
+
+  // One trail per finger instead of per hand; set from the command palette.
+  let trailsPerFinger = ref(false)
 
   let fadeMs = 500
   let bumpMs = 450
@@ -1138,28 +1153,36 @@ module Trace = {
     }
   }
 
-  // One hand's keys in a word, in typing order, with the offset each is typed
-  // at.
-  type plan = {keys: array<string>, offsets: array<int>}
+  // One hand's or finger's keys in a word, in typing order, with the offset
+  // each is typed at. `finger` is the finger's two-letter code, or the hand's
+  // letter ("l" or "r") for a hand's trail.
+  type plan = {finger: string, keys: array<string>, offsets: array<int>}
 
-  // Split text[start..stop] by hand, using the recorded fingering for the
-  // word. A key pressed again straight away is the same stop on the path.
+  // Split text[start..stop] by hand, or by finger, using the recorded
+  // fingering for the word, in the order each first comes up. A key pressed
+  // again straight away is the same stop on the path.
   let planWord = (~charKey, text, start, stop) => {
-    let left = {keys: [], offsets: []}
-    let right = {keys: [], offsets: []}
+    let plans = []
     for i in start to stop {
       switch charKey->Dict.get(Fingering.charAt(text, i)) {
       | Some(keycode) =>
-        let hand =
-          Fingering.at(~charKey, text, i, keycode)->Js.String2.charAt(0) == "l" ? left : right
-        if hand.keys->Array.get(hand.keys->Array.length - 1) != Some(keycode) {
-          hand.keys->Array.push(keycode)
-          hand.offsets->Array.push(i)
+        let finger = Fingering.at(~charKey, text, i, keycode)
+        let finger = trailsPerFinger.contents ? finger : finger->Js.String2.charAt(0)
+        let plan = switch plans->Array.find(p => p.finger == finger) {
+        | Some(p) => p
+        | None =>
+          let p = {finger, keys: [], offsets: []}
+          plans->Array.push(p)
+          p
+        }
+        if plan.keys->Array.get(plan.keys->Array.length - 1) != Some(keycode) {
+          plan.keys->Array.push(keycode)
+          plan.offsets->Array.push(i)
         }
       | None => ()
       }
     }
-    [left, right]
+    plans
   }
 
   // Path segments through `points`: a Catmull-Rom spline written as cubic
@@ -1250,7 +1273,8 @@ module Trace = {
       board->Dom.Element.appendChild(~child=defs)
     }
 
-  let buildTrail = (root, board, group, plan, color) => {
+  // `stroke` is the trail's CSS colour.
+  let buildTrail = (root, board, group, plan, stroke) => {
     let points =
       plan.keys->Array.filterMap(k => keyIn(root, k)->Option.map(key => center(key, board)))
     switch points->Array.get(0) {
@@ -1283,7 +1307,7 @@ module Trace = {
           let piece = svg("path")
           piece->Dom.Element.setAttribute("d", d)
           piece->Dom.Element.setAttribute("fill", "none")
-          piece->Dom.Element.setAttribute("stroke", c(color))
+          piece->Dom.Element.setAttribute("stroke", stroke)
           piece->Dom.Element.setAttribute("stroke-opacity", "0")
           tail->Dom.Element.appendChild(~child=piece)
           let step = total /. Float.fromInt(n)
@@ -1298,7 +1322,7 @@ module Trace = {
       orb->Dom.Element.setAttribute("opacity", "0")
       let ball = svg("circle")
       ball->Dom.Element.setAttribute("r", "11")
-      ball->Dom.Element.setAttribute("fill", c(color))
+      ball->Dom.Element.setAttribute("fill", stroke)
       orb->Dom.Element.appendChild(~child=ball)
       let core = svg("circle")
       core->Dom.Element.setAttribute("r", "5")
@@ -1317,7 +1341,13 @@ module Trace = {
       board->Dom.Element.appendChild(~child=group)
       let trails =
         planWord(~charKey=b.charKey, text, from, stop)->Array.filterMap(plan =>
-          buildTrail(b.root, board, group, plan, color)
+          buildTrail(
+            b.root,
+            board,
+            group,
+            plan,
+            trailsPerFinger.contents ? `rgb(${fingerColor(plan.finger)})` : c(color),
+          )
         )
       {
         text,
@@ -1635,17 +1665,6 @@ let fingerKeys = {
       keys
     }
 }
-
-// Each finger's colour, the same on both hands: index amber, middle emerald,
-// ring sky, pinky violet. `finger` is a two-letter code such as "ri".
-let fingerColor = finger =>
-  switch finger->Js.String2.charAt(1) {
-  | "i" => "251 191 36"
-  | "m" => "52 211 153"
-  | "r" => "56 189 248"
-  | "p" => "167 139 250"
-  | _ => "241 245 249"
-  }
 
 // Whether keypresses light up the pressing finger's keys; set from the
 // command palette.
@@ -2467,6 +2486,7 @@ let default = (props: props) => {
   let (profileId, setProfileId) = React.useState(() => "stronglytyped")
   let (fingerZones, setFingerZones) = React.useState(() => true)
   let (falloff, setFalloff) = React.useState(() => true)
+  let (trailsPerFinger, setTrailsPerFinger) = React.useState(() => false)
   // the weight on same-finger bumps, and the slider that sets it
   let (sameFingerWeight, setSameFingerWeight) = React.useState(() => {
     Palette.value: 2.,
@@ -2587,6 +2607,10 @@ let default = (props: props) => {
     }
     switch remembered("zoneFalloff") {
     | Some("off") => setFalloff(_ => false)
+    | _ => ()
+    }
+    switch remembered("trails") {
+    | Some("finger") => setTrailsPerFinger(_ => true)
     | _ => ()
     }
     switch remembered("sameFingerWeight")
@@ -2784,6 +2808,15 @@ let default = (props: props) => {
     None
   }, [falloff])
 
+  // The word's trails are planned when it comes up, so a change of mode drops
+  // them and the next keypress plans them again.
+  React.useEffect1(() => {
+    Trace.trailsPerFinger := trailsPerFinger
+    Boards.each(Trace.forget)
+    remember("trails", trailsPerFinger ? "finger" : "hand")
+    None
+  }, [trailsPerFinger])
+
   React.useEffect1(() => {
     Trace.sameFingerWeight := sameFingerWeight.value
     remember(
@@ -2913,6 +2946,15 @@ let default = (props: props) => {
             checked: p.id == profileId,
             action: Run(() => setProfileId(_ => p.id)),
           }),
+        }),
+      },
+      {
+        label: "Trails",
+        hint: trailsPerFinger ? "per finger" : "per hand",
+        checked: false,
+        action: Run(() => {
+          setTrailsPerFinger(_ => !trailsPerFinger)
+          setToast(_ => Some(trailsPerFinger ? "Trails per hand" : "Trails per finger"))
         }),
       },
       {
