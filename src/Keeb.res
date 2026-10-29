@@ -2857,6 +2857,13 @@ let default = (props: props) => {
   //   None
   // }, [runState])
 
+  // Back to the start of the passage: the same text, nothing typed yet.
+  let rewind = () => {
+    Trace.reset()
+    Trace.forget()
+    setState(((_offset, text, color, _highlightColor)) => (-1, text, color, #white))
+  }
+
   // Buttons that keep focus where it was, so typing carries on afterwards.
   let button = (~label, ~onClick, ~disabled=false, ~danger=false, ()) =>
     <button
@@ -2913,28 +2920,39 @@ let default = (props: props) => {
         <span className="text-slate-600"> {React.string("esc for commands")} </span>
       </div>
     }}
-    <button
-      className="bg-slate-800 p-6 rounded-xl shadow-2xl text-3xl font-mono text-white"
-      onClick={_ => setRunState(_ => #Running)}
-      disabled={runState == #Running}>
-      {React.array(
-        text
-        ->String.split("")
-        ->Array.mapWithIndex((char, i) => {
-          let className = {
-            if i <= offset {
-              switch highlightColor {
-              | #white => "text-slate-100"
-              | #red => "text-red-500"
+    <div className="relative">
+      <button
+        className="w-full bg-slate-800 p-6 pr-12 rounded-xl shadow-2xl text-3xl font-mono text-white"
+        onClick={_ => setRunState(_ => #Running)}
+        disabled={runState == #Running}>
+        {React.array(
+          text
+          ->String.split("")
+          ->Array.mapWithIndex((char, i) => {
+            let className = {
+              if i <= offset {
+                switch highlightColor {
+                | #white => "text-slate-100"
+                | #red => "text-red-500"
+                }
+              } else {
+                "text-slate-600"
               }
-            } else {
-              "text-slate-600"
             }
-          }
-          <span className> {React.string(char)} </span>
-        }),
-      )}
-    </button>
+            <span className> {React.string(char)} </span>
+          }),
+        )}
+      </button>
+      <button
+        className="absolute right-2 top-2 rounded px-2 text-xl text-slate-500 hover:bg-slate-700 hover:text-slate-100 disabled:opacity-0"
+        title="Rewind to the start"
+        ariaLabel="Rewind to the start"
+        disabled={offset == -1}
+        onMouseDown={e => ReactEvent.Mouse.preventDefault(e)}
+        onClick={_ => rewind()}>
+        {React.string(`↺`)}
+      </button>
+    </div>
     <Editor.Provider value=editor>
       <Keyboard t={#Ansi(ansi)} input setState nextText />
     </Editor.Provider>
